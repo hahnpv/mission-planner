@@ -1,0 +1,1309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mission planner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --ink:#0b0b0b; --muted:#898781; --grid:#e1e0d9;
+  --blue:#2a78d6; --orange:#eb6834; --green:#1baf7a; --red:#d03b3b;
+  --bg:#fcfcfb; --panel:#f6f5f2;
+}
+* { box-sizing: border-box; }
+body {
+  margin:0; font:13px/1.45 system-ui, sans-serif; color:var(--ink);
+  background:var(--bg); height:100vh; display:flex;
+}
+#side {
+  width:340px; min-width:340px; padding:14px 16px; overflow-y:auto;
+  border-right:1px solid var(--grid); background:var(--panel);
+}
+#main { flex:1; display:flex; flex-direction:column; min-width:0; }
+#mapwrap { flex:1; min-height:0; position:relative; }
+svg#map { width:100%; height:100%; display:block; background:var(--bg); cursor:grab; }
+svg#map.dragging { cursor:grabbing; }
+h1 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; margin:0 0 12px; }
+.lbl {
+  font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); margin:12px 0 3px;
+}
+.row { display:flex; gap:8px; align-items:center; }
+.row > * { flex:1; }
+input, select, button {
+  font:inherit; color:var(--ink); background:var(--bg);
+  border:1px solid var(--grid); border-radius:4px; padding:4px 7px; width:100%;
+}
+input[type=range] { padding:0; border:none; background:transparent; }
+button { cursor:pointer; }
+button.primary { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:600; }
+button.ghost { background:transparent; }
+button.small { width:auto; padding:2px 8px; font-size:11px; }
+button.cbtn.on { background:var(--grid); font-weight:600; }
+details.modbox { border-top:1px solid var(--grid); margin-top:12px; padding-top:4px; }
+details.modbox summary { cursor:pointer; display:list-item; margin:0 0 3px; }
+details.modbox[open] summary { margin-bottom:6px; }
+#pluginbox { border-top:none; margin-top:0; padding-top:0; }
+.plug { display:flex; flex-wrap:wrap; gap:2px 6px; align-items:baseline; margin:5px 0; }
+.plug .badges { flex-basis:100%; margin-left:20px; }
+.plug input { width:auto; }
+.plug .name { flex:1; }
+.plug.off .name { color:var(--muted); }
+.plug .err { flex-basis:100%; color:var(--red); font-size:11px; margin-left:20px; }
+label.chk { display:block; cursor:pointer; }
+label.chk input { width:auto; }
+label.chk .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 2px; vertical-align:-1px; }
+.plug .why { flex-basis:100%; color:var(--muted); font-size:11px; margin-left:20px; }
+.plug.unavail .name { color:var(--muted); }
+.badge { display:inline-block; white-space:nowrap; margin:1px 0; font-size:10px; color:var(--muted); border:1px solid var(--grid); border-radius:3px; padding:0 4px; }
+#status { color:var(--muted); min-height:1.4em; margin-top:8px; }
+#status.err { color:var(--red); font-weight:600; }
+#summary, #elements { border-top:1px solid var(--grid); margin-top:12px; padding-top:6px; }
+#summary table, #elements table { width:100%; border-collapse:collapse; }
+#summary td, #elements td { padding:1.5px 0; }
+#summary td:last-child, #elements td:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+#timebar {
+  border-top:1px solid var(--grid); padding:8px 14px; background:var(--panel);
+  display:flex; gap:10px; align-items:center;
+}
+#timebar .clock { font-variant-numeric:tabular-nums; min-width:170px; }
+#timebar input[type=range] { flex:1; }
+#winrow { display:flex; gap:6px; align-items:center; padding:0 14px 8px; background:var(--panel); }
+#winrow .lbl { margin:0; }
+/* dual-ended window slider: two overlaid native ranges, thumbs-only hit
+   targets, one shared track with the selected span highlighted */
+#winslider { position:relative; flex:1; height:18px; }
+#winslider input {
+  position:absolute; inset:0; width:100%; height:18px; margin:0; border:none;
+  -webkit-appearance:none; appearance:none; background:transparent; pointer-events:none;
+}
+#winslider input::-webkit-slider-thumb {
+  -webkit-appearance:none; appearance:none; pointer-events:auto; cursor:ew-resize;
+  width:13px; height:13px; border-radius:50%; background:var(--blue);
+  border:2px solid #fff; box-shadow:0 0 0 1px var(--grid);
+}
+#winslider input::-moz-range-thumb {
+  pointer-events:auto; cursor:ew-resize; width:10px; height:10px;
+  border-radius:50%; background:var(--blue); border:2px solid #fff;
+}
+#wintrack, #winfill { position:absolute; top:7.5px; height:3px; border-radius:2px; }
+#wintrack { left:0; right:0; background:var(--grid); }
+#winfill { background:var(--blue); }
+#spark { width:100%; height:64px; margin-top:4px; }
+.legend {
+  position:absolute; right:10px; top:10px; background:rgba(252,252,251,.92);
+  border:1px solid var(--grid); border-radius:4px; padding:6px 10px; font-size:12px;
+  max-width:240px;
+}
+.legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+.hint { font-size:11px; color:var(--muted); }
+#entrybox { color:var(--red); font-weight:600; }
+</style>
+</head>
+<body>
+
+<div id="side">
+  <h1>Mission Planner</h1>
+  <details class="modbox" id="pluginbox">
+    <summary class="lbl" id="pluginsum">plugins</summary>
+    <div id="pluginlist"></div>
+    <div class="hint">panels, map layers, routes, modes and data switch live; mcp
+    tools are fixed when the MCP server starts (MP_DISABLE_MODULES).</div>
+  </details>
+
+  <div class="lbl">orbit preset</div>
+  <select id="preset"></select>
+  <div id="preset2row" style="display:none">
+    <div class="lbl">variant</div>
+    <select id="preset2"></select>
+  </div>
+
+  <div id="sitebox">
+    <div class="lbl">launch site</div>
+    <select id="site"></select>
+    <div class="row" style="margin-top:4px">
+      <input id="sitelat" type="number" step="0.1" placeholder="lat">
+      <input id="sitelon" type="number" step="0.1" placeholder="lon">
+    </div>
+  </div>
+  <div id="nodelonrow" style="display:none">
+    <div class="lbl">node / station longitude &deg;E</div>
+    <input id="nodelon" type="number" step="5" value="0">
+  </div>
+  <div id="ltanrow" style="display:none">
+    <div class="lbl">LTAN — local time of ascending node (h)</div>
+    <input id="ltan" type="number" step="0.5" min="0" max="24" value="10.5">
+  </div>
+
+  <div class="lbl">perigee altitude <span id="altv" style="color:var(--ink)"></span> km</div>
+  <input id="alt" type="range" min="120" max="1000" step="5" value="160">
+  <div class="row" style="margin-top:2px">
+    <input id="peri" type="number" step="10" value="160" title="perigee altitude km">
+    <input id="apo" type="number" step="10" placeholder="apogee km (blank = circular)">
+  </div>
+  <div class="lbl" id="pofslbl">perigee position <span id="pofsv" style="color:var(--ink)">0</span>&deg; downrange of site</div>
+  <input id="pofs" type="range" min="0" max="359" step="1" value="0" disabled>
+  <div class="lbl">inclination <span id="incv" style="color:var(--ink)"></span> deg</div>
+  <input id="inc" type="range" min="0" max="120" step="0.01" value="51.6">
+
+  <div class="lbl">launch epoch (utc)</div>
+  <input id="epoch" type="datetime-local" step="60">
+  <div class="lbl">leg over site</div>
+  <select id="leg">
+    <option value="ascending">ascending (northeast)</option>
+    <option value="descending">descending (southeast)</option>
+  </select>
+
+  <div class="lbl">propagate <span id="hoursv" style="color:var(--ink)"></span> hours</div>
+  <input id="hours" type="range" min="1" max="720" step="1" value="24">
+
+  <div class="lbl">propagation mode</div>
+  <select id="mode">
+    <option value="kepler">kepler + J2 (no drag)</option>
+    <option value="decay">drag decay (ballistic coeff.)</option>
+  </select>
+  <div id="betarow" style="display:none">
+    <div class="lbl">ballistic coefficient β = m/(C<sub>d</sub>A) kg/m²</div>
+    <input id="beta" type="number" step="10" value="300">
+  </div>
+
+  <div style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
+  <div id="status">set parameters, then plan.</div>
+
+  <details class="modbox" id="displaybox" open>
+    <summary class="lbl">display</summary>
+    <label class="chk"><input type="checkbox" id="disp_horizon"> horizon footprint at playback time</label>
+    <label class="chk"><input type="checkbox" id="disp_night" checked> night shading</label>
+    <div id="displayextra"></div>
+    <div id="overlaylist"></div>
+    <div class="hint">green ring = the satellite's visible horizon; anything inside
+    (e.g. a downlink site) can see the vehicle</div>
+  </details>
+  <div id="modulebox"></div>
+
+  <div id="summary"></div>
+  <div id="decaybox" style="display:none">
+    <div class="lbl">altitude vs time</div>
+    <svg id="spark"></svg>
+    <div id="entrybox"></div>
+  </div>
+
+  <div id="elements"></div>
+</div>
+
+<div id="main">
+  <div id="mapwrap">
+    <svg id="map" viewBox="0 0 1080 540" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="legend" id="legend" style="display:none"></div>
+  </div>
+  <div id="winrow">
+    <span class="lbl">center</span>
+    <button class="small ghost cbtn on" data-c="0">0&deg;</button>
+    <button class="small ghost cbtn" data-c="90">90E</button>
+    <button class="small ghost cbtn" data-c="180">180&deg;</button>
+    <button class="small ghost cbtn" data-c="-90">90W</button>
+    <span class="lbl" style="margin-left:8px">show</span>
+    <button class="small ghost" data-win="rev">1 rev</button>
+    <button class="small ghost" data-win="5400">90 min</button>
+    <button class="small ghost" data-win="86400">24 h</button>
+    <button class="small ghost" data-win="all">all</button>
+    <div id="winslider" title="shown time window">
+      <div id="wintrack"></div><div id="winfill"></div>
+      <input id="win0" type="range" min="0" max="1000" value="0">
+      <input id="win1" type="range" min="0" max="1000" value="1000">
+    </div>
+    <span class="hint" id="winlabel"></span>
+  </div>
+  <div id="timebar">
+    <button id="play" class="small">&#9654;</button>
+    <select id="speed" style="width:auto">
+      <option value="60">60×</option>
+      <option value="300" selected>300×</option>
+      <option value="1800">1800×</option>
+      <option value="14400">14400×</option>
+    </select>
+    <input id="scrub" type="range" min="0" max="1000" value="0">
+    <span class="clock" id="clock">—</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const C = { blue:"#2a78d6", orange:"#eb6834", green:"#1baf7a", red:"#d03b3b",
+            muted:"#898781", grid:"#e1e0d9" };
+const S = 3;                       // px per degree, base projection
+let lonC = 0;                      // map center longitude (recenter control)
+function wrapL(lon) {              // lon relative to center, [-180, 180)
+  let d = (lon - lonC) % 360;
+  if (d < -180) d += 360;
+  if (d >= 180) d -= 360;
+  return d;
+}
+const X = lon => (wrapL(lon) + 180) * S;
+const Y = lat => (90 - lat) * S;
+const api = async p => { const r = await fetch(p); return r.json(); };
+function status(msg, isErr) {
+  $("status").textContent = msg;
+  $("status").className = isErr ? "err" : "";
+}
+
+// ------------------------------------------------------------ state
+let coast = null, sitesList = [], overlayList = [];   // catalog: core + active data packs
+const overlayOff = new Set();   // "pack/id" of overlays the user switched off
+const display = { horizon: false, night: true };   // core display menu
+let activePreset = null;   // {argp?, node_lon?} when an orbit preset is selected
+let plan = null;          // {summary, track} from /api/plan
+let scene = null;         // agent-pushed Scene
+let win = [0, 1];         // shown span, fraction of track duration
+let tCur = 0;             // scrub time, seconds past epoch
+let playing = false, lastFrame = 0;
+let view = { x:0, y:0, w:1080, h:540 };
+let pinOpen = null;       // key of the marker whose info callout is showing
+let pinHit = null;        // that marker's position, captured during redraw
+
+// ------------------------------------------------------------ svg helpers
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || $("map")).appendChild(e);
+  return e;
+}
+// polyline that splits at the map seam (center-dependent antimeridian)
+function polyline(pts, attrs, parent) {
+  let run = [];
+  const flush = () => {
+    if (run.length > 1)
+      el("polyline", { ...attrs, fill:"none",
+        points: run.map(p => X(p[1]).toFixed(1) + "," + Y(p[0]).toFixed(1)).join(" ") }, parent);
+    run = [];
+  };
+  for (let i = 0; i < pts.length; i++) {
+    if (i && Math.abs(wrapL(pts[i][1]) - wrapL(pts[i-1][1])) > 180) flush();
+    run.push(pts[i]);
+  }
+  flush();
+}
+// filled polygon that survives the seam: unwrap the ring to a contiguous
+// strip, then draw shifted copies; the svg viewport clips the offscreen ones.
+function polygon(latArr, lonArr, attrs, parent) {
+  let cum = wrapL(lonArr[0]);
+  const xs = [cum];
+  for (let i = 1; i < lonArr.length; i++) {
+    let d = (lonArr[i] - lonArr[i-1]) % 360;
+    if (d < -180) d += 360;
+    if (d >= 180) d -= 360;
+    cum += d; xs.push(cum);
+  }
+  for (const off of [-360, 0, 360]) {
+    const pts = xs.map((x, i) =>
+      `${((x + off + 180) * S).toFixed(1)},${Y(latArr[i]).toFixed(1)}`);
+    el("polygon", { ...attrs, points: pts.join(" ") }, parent);
+  }
+}
+
+// ------------------------------------------------------------ sun / terminator
+function solarSubpoint(dateMs) {
+  const d = dateMs / 86400000 - 10957.5;          // days since J2000.0
+  const rad = Math.PI / 180;
+  const L = (280.460 + 0.9856474 * d) % 360;
+  const g = (357.528 + 0.9856003 * d) * rad;
+  const lam = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2*g)) * rad;
+  const eps = 23.439 * rad;
+  const decl = Math.asin(Math.sin(eps) * Math.sin(lam));
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam));
+  const gmst = ((280.46061837 + 360.98564736629 * d) % 360) * rad;
+  let lon = (ra - gmst) / rad;
+  lon = ((lon + 540) % 360) - 180;
+  return { lat: decl / rad, lon };
+}
+function terminatorPath(sun) {
+  // Night-side polygon in SCREEN longitude (s = lon - lonC): immune to the
+  // wrap seam, closed over the dark pole.
+  const rad = Math.PI / 180, pts = [];
+  const tanDecl = Math.tan(Math.max(Math.abs(sun.lat), 0.01) * rad) * Math.sign(sun.lat || 1);
+  for (let s = -180; s <= 180; s += 2) {
+    const H = (s + lonC - sun.lon) * rad;
+    pts.push([Math.atan(-Math.cos(H) / tanDecl) / rad, (s + 180) * S]);
+  }
+  const poleY = sun.lat >= 0 ? Y(-90) : Y(90);
+  let dPath = "M" + pts.map(p => p[1].toFixed(1) + " " + Y(p[0]).toFixed(1)).join(" L");
+  dPath += ` L ${360 * S} ${poleY} L 0 ${poleY} Z`;
+  return dPath;
+}
+
+// ------------------------------------------------------------ draw
+function trackWindowIdx() {
+  if (!plan) return [0, 0];
+  const t = plan.track.t, tEnd = t[t.length - 1];
+  const lo = win[0] * tEnd, hi = win[1] * tEnd;
+  let i0 = t.findIndex(v => v >= lo); if (i0 < 0) i0 = 0;
+  let i1 = t.length - 1;
+  for (let i = t.length - 1; i >= 0; i--) if (t[i] <= hi) { i1 = i; break; }
+  return [i0, Math.max(i0 + 1, i1)];
+}
+function idxAtTime(ts, tr) {
+  const t = (tr || plan.track).t;
+  let lo = 0, hi = t.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; (t[m] <= ts ? lo = m : hi = m); }
+  return (ts - t[lo] < t[hi] - ts) ? lo : hi;
+}
+// Earth-relative flight path angle [deg] at sample k of a track: the angle
+// between the velocity and the local horizontal, atan2(dh/dt, r*dtheta/dt).
+// Backward difference off the earth-fixed track, so this is the relative
+// (not inertial) gamma -- the one entry corridors are quoted in.  Negative
+// is descending.
+function fpaDeg(tr, k) {
+  const i = Math.max(1, Math.min(k, tr.t.length - 1));
+  const dt = tr.t[i] - tr.t[i - 1];
+  if (!(dt > 0)) return 0;
+  const rad = Math.PI / 180, RE = 6378.137;
+  const la1 = tr.lat[i - 1] * rad, la2 = tr.lat[i] * rad;
+  let dlon = (tr.lon[i] - tr.lon[i - 1]) * rad;
+  dlon = Math.atan2(Math.sin(dlon), Math.cos(dlon));          // wrap-safe
+  const hav = Math.sin((la2 - la1) / 2) ** 2
+    + Math.cos(la1) * Math.cos(la2) * Math.sin(dlon / 2) ** 2;
+  const dth = 2 * Math.asin(Math.min(1, Math.sqrt(Math.max(hav, 0))));
+  const r = (RE + 0.5 * (tr.alt_km[i] + tr.alt_km[i - 1])) * 1e3;
+  const vh = dth * r / dt, vr = (tr.alt_km[i] - tr.alt_km[i - 1]) * 1e3 / dt;
+  return Math.atan2(vr, vh) / rad;
+}
+
+// Wrap map graphics in a group that toggles an info callout when clicked.
+// `info` = {key, title, alt_km?, gamma_deg?, rows?} -- key must be stable
+// across redraws, since redraw() rebuilds every node from scratch.
+function pinGroup(info, lat, lon) {
+  const g = el("g", { style:"cursor:pointer" });
+  // The glyphs are 4-7 px across; give the pointer something to hit.
+  el("circle", { cx:X(lon), cy:Y(lat), r:11, fill:"transparent" }, g);
+  // Swallow the press so the map does not read this as a pan or a map click.
+  g.addEventListener("mousedown", ev => ev.stopPropagation());
+  g.addEventListener("click", ev => {
+    ev.stopPropagation();
+    pinOpen = pinOpen === info.key ? null : info.key;
+    redraw();
+  });
+  if (pinOpen === info.key) pinHit = { info, lat, lon, x:X(lon), y:Y(lat) };
+  return g;
+}
+
+function marker(lat, lon, color, symbol, name, info) {
+  const x = X(lon), y = Y(lat);
+  const parent = info ? pinGroup(info, lat, lon) : null;
+  if (symbol === "target") {
+    el("circle", { cx:x, cy:y, r:7, fill:"none", stroke:color, "stroke-width":1.6 }, parent);
+    el("circle", { cx:x, cy:y, r:1.8, fill:color }, parent);
+  } else if (symbol === "site") {
+    el("rect", { x:x-3.5, y:y-3.5, width:7, height:7, fill:"none", stroke:color, "stroke-width":1.6 }, parent);
+  } else {
+    el("circle", { cx:x, cy:y, r:3.4, fill:color, stroke:"#fcfcfb", "stroke-width":1.2 }, parent);
+  }
+  if (name) el("text", { x:x+9, y:y+4, fill:"#0b0b0b", "font-size":11 }, parent).textContent = name;
+}
+
+// The open marker's readout.  Scaled by the zoom so it stays a constant size
+// on screen, and flipped when it would spill outside the viewport.
+function drawPin(p) {
+  const k = view.w / 1080;
+  const rows = [["lat", p.lat.toFixed(3) + "\u00b0"],
+                ["lon", p.lon.toFixed(3) + "\u00b0"]];
+  if (p.info.alt_km != null) rows.push(["alt", p.info.alt_km.toFixed(1) + " km"]);
+  if (p.info.gamma_deg != null)
+    rows.push(["\u03b3", p.info.gamma_deg.toFixed(2) + "\u00b0"]);
+  for (const r of p.info.rows || []) rows.push(r);
+  const title = p.info.title || "";
+  const lh = 13 * k, pad = 7 * k;
+  const chars = Math.max(title.length,
+    ...rows.map(r => String(r[0]).length + String(r[1]).length + 3));
+  const w = Math.max(104 * k, (chars * 6.2 + 18) * k);
+  const h = 2 * pad + (rows.length + (title ? 1 : 0)) * lh;
+  let bx = p.x + 12 * k, by = p.y + 8 * k;
+  if (bx + w > view.x + view.w) bx = p.x - 12 * k - w;
+  if (by + h > view.y + view.h) by = p.y - 8 * k - h;
+  const g = el("g", { style:"cursor:pointer" });
+  g.addEventListener("mousedown", ev => ev.stopPropagation());
+  g.addEventListener("click", ev => { ev.stopPropagation(); pinOpen = null; redraw(); });
+  el("rect", { x:bx, y:by, width:w, height:h, rx:3 * k, fill:"rgba(252,252,251,.96)",
+               stroke:C.grid, "stroke-width":k }, g);
+  let ty = by + pad + 9 * k;
+  if (title) {
+    el("text", { x:bx + pad, y:ty, "font-size":11 * k, "font-weight":600,
+                 fill:"#0b0b0b" }, g).textContent = title;
+    ty += lh;
+  }
+  for (const [lab, val] of rows) {
+    el("text", { x:bx + pad, y:ty, "font-size":11 * k, fill:C.muted }, g)
+      .textContent = lab;
+    el("text", { x:bx + w - pad, y:ty, "font-size":11 * k, "text-anchor":"end",
+                 fill:"#0b0b0b", style:"font-variant-numeric:tabular-nums" }, g)
+      .textContent = val;
+    ty += lh;
+  }
+}
+
+function drawHorizon() {
+  const RE = 6378.137, rad = Math.PI / 180, tr = plan.track, k = idxAtTime(tCur);
+  const lat0 = tr.lat[k] * rad, lon0 = tr.lon[k] * rad;
+  const lam = Math.acos(RE / (RE + Math.max(tr.alt_km[k], 1)));
+  const lats = [], lons = [];
+  for (let b = 0; b <= 360; b += 3) {
+    const th = b * rad;
+    const la = Math.asin(Math.sin(lat0) * Math.cos(lam)
+      + Math.cos(lat0) * Math.sin(lam) * Math.cos(th));
+    const lo = lon0 + Math.atan2(Math.sin(th) * Math.sin(lam) * Math.cos(lat0),
+      Math.cos(lam) - Math.sin(lat0) * Math.sin(la));
+    lats.push(la / rad);
+    lons.push(((lo / rad + 540) % 360 + 360) % 360 - 180);
+  }
+  polygon(lats, lons, { fill: C.green, "fill-opacity": .10, stroke: C.green,
+    "stroke-width": 1.4, "stroke-opacity": .8, "pointer-events": "none" });
+}
+
+function redraw() {
+  const svg = $("map");
+  svg.innerHTML = "";
+  pinHit = null;
+  svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+
+  // graticule
+  for (let lon = -180; lon <= 180; lon += 30)
+    el("line", { x1:X(lon), y1:Y(90), x2:X(lon), y2:Y(-90), stroke:C.grid, "stroke-width":.5 });
+  for (let lat = -60; lat <= 60; lat += 30)
+    el("line", { x1:X(-180), y1:Y(lat), x2:X(180), y2:Y(lat),
+                 stroke:C.grid, "stroke-width": lat ? .5 : 1 });
+
+  // coastline
+  if (coast) for (const f of coast.features)
+    polyline(f.geometry.coordinates.map(c => [c[1], c[0]]),
+             { stroke:"#b9b7ae", "stroke-width":.7 });
+
+  // static overlays (shaded regions, e.g. range/warning areas)
+  for (const ov of overlayList) {
+    const color = ov.style.color || C.red, op = ov.style.opacity || .16;
+    if (overlayOff.has(ov.pack + "/" + ov.id)) continue;
+    const rings = [];
+    for (const f of ov.geojson.features) {
+      const g = f.geometry;
+      if (g.type === "Polygon") rings.push(g.coordinates[0]);
+      else if (g.type === "MultiPolygon")
+        for (const poly of g.coordinates) rings.push(poly[0]);
+    }
+    for (const ring of rings)
+      polygon(ring.map(c => c[1]), ring.map(c => c[0]), {
+        fill: color, "fill-opacity": op, stroke: color,
+        "stroke-width": .8, "stroke-opacity": .6, "pointer-events": "none",
+      });
+  }
+
+  // horizon footprint at the playback position: the ground that can see the
+  // vehicle at 0 deg elevation, geocentric radius acos(RE/(RE+h))
+  if (plan && display.horizon) drawHorizon();
+
+  // module map layers, under the ground track
+  const layerCtx = () => ({ plan, tCur, el, polygon, polyline, marker, pinGroup,
+                            X, Y, C, idxAtTime, fpa: fpaDeg });
+  for (const fn of MP.live(MP._layers)) {
+    try { fn(layerCtx()); }
+    catch (e) { console.error("module layer:", e); }
+  }
+
+  // day/night terminator at scrub time
+  if (plan && display.night) {
+    const ms = Date.parse(plan.track.epoch_utc) + tCur * 1000;
+    el("path", { d: terminatorPath(solarSubpoint(ms)),
+                 fill:"#1c2733", opacity:.10, "pointer-events":"none" });
+  }
+
+  // ground track (clipped to display window)
+  if (plan) {
+    const [i0, i1] = trackWindowIdx();
+    const tr = plan.track, pts = [];
+    for (let i = i0; i <= i1; i++) pts.push([tr.lat[i], tr.lon[i]]);
+    polyline(pts, { stroke:C.blue, "stroke-width":1.1, opacity:.45 });
+    // Emphasize the orbit around the playback position: half a rev ahead
+    // and behind the satellite dot, clipped to the display window.
+    const halfP = plan.summary.period_s / 2, rev = [];
+    for (let i = i0; i <= i1; i++)
+      if (Math.abs(tr.t[i] - tCur) <= halfP) rev.push([tr.lat[i], tr.lon[i]]);
+    polyline(rev, { stroke:C.blue, "stroke-width":2.2 });
+
+    // launch site + satellite at scrub time
+    if (plan.summary.site_lat != null)
+      marker(plan.summary.site_lat, plan.summary.site_lon, C.muted, "site", "",
+             { key:"site", title: plan.summary.site });
+    const k = idxAtTime(tCur);
+    if (k >= i0 && k <= i1) {
+      marker(tr.lat[k], tr.lon[k], C.blue, "dot", "",
+             { key:"sat", title:"satellite", alt_km: tr.alt_km[k],
+               gamma_deg: fpaDeg(tr, k),
+               rows: [["utc", fmtUTC(Date.parse(tr.epoch_utc)
+                                     + tr.t[k] * 1000).slice(5)]] });
+      el("text", { x:X(tr.lon[k])+8, y:Y(tr.lat[k])-6, fill:C.blue, "font-size":11 })
+        .textContent = tr.alt_km[k].toFixed(0) + " km";
+    }
+    // perigee/apogee markers on the first pass (elliptic only)
+    if (tr.apsides) for (const ap of tr.apsides) {
+      const x = X(ap.lon_deg), y = Y(ap.lat_deg);
+      // gamma is exactly 0 at an apsis -- the radial rate vanishes there.
+      const g = pinGroup({ key:"apsis:" + ap.kind, alt_km: ap.alt_km, gamma_deg: 0,
+                           title: ap.kind === "P" ? "perigee" : "apogee",
+                           rows: [["t+", (ap.t_s / 60).toFixed(1) + " min"]] },
+                         ap.lat_deg, ap.lon_deg);
+      el("circle", { cx:x, cy:y, r:4,
+                     fill: ap.kind === "P" ? C.blue : "#fcfcfb",
+                     stroke: C.blue, "stroke-width":1.6 }, g);
+      el("text", { x:x+7, y:y+4, fill:C.blue, "font-size":11, "font-weight":600 }, g)
+        .textContent = ap.kind + " " + ap.alt_km.toFixed(0) + " km";
+    }
+
+    // entry interface crossing (drag modes) and ground impact (modes that fly to the ground)
+    if (tr.entry) marker(tr.entry.lat_deg, tr.entry.lon_deg,
+                         tr.impact ? C.orange : C.red, "target", "entry",
+                         { key:"entry", title:"entry interface", alt_km:100,
+                           gamma_deg: fpaDeg(tr, idxAtTime(tr.entry.t_s, tr)),
+                           rows: [["utc", tr.entry.epoch_utc.replace("T", " ").slice(5, 19) + "Z"]] });
+    if (tr.impact) marker(tr.impact.lat_deg, tr.impact.lon_deg, C.red,
+                          "target", "impact",
+                          { key:"impact", title:"impact", alt_km: tr.impact.last_alt_km,
+                            gamma_deg: fpaDeg(tr, idxAtTime(tr.impact.t_s, tr)),
+                            rows: [["utc", tr.impact.epoch_utc.replace("T", " ").slice(5, 19) + "Z"]] });
+  }
+
+  // module map layers drawn ON TOP of the track (markers, callouts)
+  for (const fn of MP.live(MP._over)) {
+    try { fn(layerCtx()); }
+    catch (e) { console.error("module layer:", e); }
+  }
+
+  // agent scene layers
+  if (scene) drawScene();
+
+  // the open marker's callout, last so nothing can draw over it
+  if (pinHit) drawPin(pinHit);
+}
+
+const SCENE_COLORS = [C.blue, C.orange, C.green, C.red];
+function drawScene() {
+  let ci = 0, mi = 0; const items = [];
+  for (const layer of scene.layers) {
+    const color = layer.color || (ci < 4 ? SCENE_COLORS[ci++] : C.muted);
+    if (layer.kind === "track") {
+      const pts = layer.lat.map((la, i) => [la, layer.lon[i]]);
+      polyline(pts, { stroke: color, "stroke-width": layer.width || 1.6,
+                      "stroke-dasharray": layer.dash || "" });
+      items.push([color, layer.name]);
+    } else if (layer.kind === "marker") {
+      marker(layer.lat, layer.lon, color, layer.symbol || "dot", layer.name,
+             { key:"scene:" + (mi++), title: layer.name || "marker" });
+      items.push([color, layer.name]);
+    } else if (layer.kind === "polygon") {
+      polygon(layer.lat, layer.lon, { fill: color, opacity:.15,
+                                      stroke: color, "stroke-width":1 });
+      items.push([color, layer.name]);
+    } else if (layer.kind === "label") {
+      el("text", { x:X(layer.lon), y:Y(layer.lat), fill: layer.color || "#0b0b0b",
+                   "font-size":11 }).textContent = layer.text;
+    }
+  }
+  const lg = $("legend");
+  const rows = items.filter(i => i[1]).map(([c, n]) =>
+    `<div><span class="sw" style="background:${c}"></span>${n}</div>`);
+  const tables = scene.layers.filter(l => l.kind === "windows");
+  let html = (scene.title ? `<b>${scene.title}</b>` : "") + rows.join("");
+  for (const tb of tables) {
+    html += `<div class="lbl">${tb.name}</div><table style="border-collapse:collapse">`
+      + `<tr>${tb.columns.map(c => `<th style="text-align:left;padding:0 6px 0 0">${c}</th>`).join("")}</tr>`
+      + tb.rows.map(r => `<tr>${r.map(v => `<td style="padding:0 6px 0 0">${v}</td>`).join("")}</tr>`).join("")
+      + "</table>";
+  }
+  lg.innerHTML = html;
+  lg.style.display = html ? "block" : "none";
+}
+
+// ------------------------------------------------------------ time controls
+function fmtUTC(ms) {
+  return new Date(ms).toISOString().replace("T", " ").slice(0, 19) + "Z";
+}
+function updateClock() {
+  if (!plan) return;
+  $("clock").textContent = fmtUTC(Date.parse(plan.track.epoch_utc) + tCur * 1000);
+}
+function setScrubFromSlider() {
+  if (!plan) return;
+  const t = plan.track.t, tEnd = t[t.length - 1];
+  const lo = win[0] * tEnd, hi = win[1] * tEnd;
+  tCur = lo + ($("scrub").value / 1000) * (hi - lo);
+  updateClock(); redraw();
+}
+function setWindow(w0, w1) {
+  win = [Math.max(0, Math.min(w0, w1 - 0.001)), Math.min(1, w1)];
+  $("win0").value = Math.round(win[0] * 1000);
+  $("win1").value = Math.round(win[1] * 1000);
+  $("winfill").style.left = (win[0] * 100) + "%";
+  $("winfill").style.width = ((win[1] - win[0]) * 100) + "%";
+  if (plan) {
+    const tEnd = plan.track.t[plan.track.t.length - 1];
+    const span = (win[1] - win[0]) * tEnd;
+    $("winlabel").textContent = span >= 86400 ? (span/86400).toFixed(1) + " d"
+                              : (span/3600).toFixed(1) + " h";
+    tCur = Math.max(win[0] * tEnd, Math.min(tCur, win[1] * tEnd));
+  }
+  updateClock(); redraw();
+}
+$("win0").oninput = () => setWindow($("win0").value/1000, $("win1").value/1000);
+$("win1").oninput = () => setWindow($("win0").value/1000, $("win1").value/1000);
+document.querySelectorAll(".cbtn").forEach(b => b.onclick = () => {
+  lonC = +b.dataset.c;
+  document.querySelectorAll(".cbtn").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  view = { x:0, y:0, w:1080, h:540 };   // recenter at default zoom
+  redraw();
+});
+document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => {
+  if (!plan) return;
+  const tEnd = plan.track.t[plan.track.t.length - 1];
+  if (b.dataset.win === "all") return setWindow(0, 1);
+  const span = b.dataset.win === "rev" ? plan.summary.period_s : +b.dataset.win;
+  const start = win[0];
+  setWindow(start, Math.min(1, start + span / tEnd));
+});
+$("scrub").oninput = setScrubFromSlider;
+$("play").onclick = () => {
+  playing = !playing;
+  $("play").innerHTML = playing ? "&#10074;&#10074;" : "&#9654;";
+  if (playing) { lastFrame = performance.now(); requestAnimationFrame(tick); }
+};
+function tick(now) {
+  if (!playing || !plan) return;
+  const dt = (now - lastFrame) / 1000; lastFrame = now;
+  const t = plan.track.t, tEnd = t[t.length - 1];
+  const lo = win[0] * tEnd, hi = win[1] * tEnd;
+  tCur += dt * (+$("speed").value);
+  if (tCur > hi) tCur = lo;
+  $("scrub").value = Math.round(1000 * (tCur - lo) / Math.max(hi - lo, 1e-9));
+  updateClock(); redraw();
+  requestAnimationFrame(tick);
+}
+
+// ------------------------------------------------------------ pan / zoom / click
+(function () {
+  const svg = $("map");
+  let down = null, moved = false;
+  // getScreenCTM accounts for the preserveAspectRatio letterboxing that a
+  // plain boundingClientRect division does not (clicks landed offset).
+  const toMap = (ev) => {
+    const p = new DOMPoint(ev.clientX, ev.clientY)
+      .matrixTransform(svg.getScreenCTM().inverse());
+    return { x: p.x, y: p.y };
+  };
+  svg.addEventListener("mousedown", ev => {
+    down = { ev, view: { ...view }, scale: svg.getScreenCTM().a };
+    moved = false; svg.classList.add("dragging");
+  });
+  window.addEventListener("mousemove", ev => {
+    if (!down) return;
+    const dx = (ev.clientX - down.ev.clientX) / down.scale;
+    const dy = (ev.clientY - down.ev.clientY) / down.scale;
+    if (Math.abs(ev.clientX - down.ev.clientX) + Math.abs(ev.clientY - down.ev.clientY) > 4) moved = true;
+    view.x = down.view.x - dx; view.y = down.view.y - dy;
+    if (moved) redraw();
+  });
+  window.addEventListener("mouseup", ev => {
+    svg.classList.remove("dragging");
+    if (down && !moved) {
+      const p = toMap(ev);
+      let lon = p.x / S - 180 + lonC;
+      lon = ((lon + 540) % 360 + 360) % 360 - 180;
+      const lat = 90 - p.y / S;
+      if (lat >= -90 && lat <= 90 && p.x >= 0 && p.x <= 360 * S)
+        for (const fn of MP.live(MP._clicks)) {
+          try { fn(lat, lon); }
+          catch (e) { console.error("module click:", e); }
+        }
+    }
+    down = null;
+  });
+  svg.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    const p = toMap(ev);
+    const f = ev.deltaY > 0 ? 1.2 : 1/1.2;
+    const w = Math.min(1080 * 1.2, Math.max(40, view.w * f));
+    const h = w / 2;
+    view.x = p.x - (p.x - view.x) * (w / view.w);
+    view.y = p.y - (p.y - view.y) * (h / view.h);
+    view.w = w; view.h = h;
+    redraw();
+  }, { passive:false });
+  svg.addEventListener("dblclick", () => { view = { x:0, y:0, w:1080, h:540 }; redraw(); });
+})();
+
+// ------------------------------------------------------------ planning
+function args() {
+  const a = new URLSearchParams();
+  if (activePreset) {
+    a.set("anchor", "elements");
+    a.set("argp", activePreset.argp || 0);
+    a.set("node_lon", $("nodelon").value || 0);
+  } else {
+    const siteSel = $("site").value;
+    if (siteSel === "custom") { a.set("lat", $("sitelat").value || 0); a.set("lon", $("sitelon").value || 0); }
+    else a.set("site", siteSel);
+    a.set("leg", $("leg").value);
+    if ($("apo").value) a.set("pofs", $("pofs").value);
+  }
+  a.set("hp", $("peri").value); a.set("inc", $("inc").value);
+  if ($("apo").value) a.set("ha", $("apo").value);
+  a.set("hours", $("hours").value);
+  const ep = $("epoch").value;
+  if (ep) a.set("epoch", ep + ":00+00:00");
+  a.set("mode", $("mode").value);
+  if (modeInfo($("mode").value).needs_beta) a.set("beta", $("beta").value);
+  // dt: keep point count sane over long horizons
+  const dt = Math.max(30, Math.round(+$("hours").value * 3600 / 20000 / 10) * 10);
+  a.set("dt", dt);
+  return a;
+}
+// Propagation modes: the core's two plus any an active plugin provides.
+const CORE_MODES = { kepler: { mode: "kepler", needs_beta: false },
+                     decay: { mode: "decay", needs_beta: true } };
+function modeInfo(mode) {
+  if (CORE_MODES[mode]) return CORE_MODES[mode];
+  for (const m of Object.values(MP.mods))
+    if (m.active) for (const x of m.modes || []) if (x.mode === mode) return x;
+  return { mode, needs_beta: false };
+}
+function buildModeSelect() {
+  const sel = $("mode"), cur = sel.value;
+  sel.querySelectorAll("option[data-plugin]").forEach(o => o.remove());
+  for (const m of Object.values(MP.mods)) {
+    if (!m.active) continue;
+    for (const x of m.modes || []) {
+      const o = document.createElement("option");
+      o.value = x.mode; o.textContent = x.label; o.dataset.plugin = m.name;
+      sel.appendChild(o);
+    }
+  }
+  if (![...sel.options].some(o => o.value === cur)) {
+    sel.value = "kepler";
+    status(`mode ${cur} is no longer available — back to kepler.`);
+  } else sel.value = cur;
+  sel.onchange();
+}
+async function doPlan() {
+  const m = modeInfo($("mode").value);
+  if (m.slow) return doJobPlan(m);
+  status("planning…");
+  let res;
+  try { res = await api("/api/plan?" + args()); }
+  catch (e) { status("server unreachable: " + e.message, true); return; }
+  if (res.error) { status(res.error, true); return; }
+  applyPlan(res);
+}
+// Slow plugin modes run as a background job on the server; poll until done.
+async function doJobPlan(m) {
+  status(`starting ${m.mode} run…`);
+  let job;
+  try {
+    job = await (await fetch("/api/plan_job?" + args(), { method: "POST" })).json();
+  } catch (e) { status("server unreachable: " + e.message, true); return; }
+  if (job.error) { status(job.error, true); return; }
+  const poll = async () => {
+    let res;
+    try { res = await api("/api/plan_job/" + job.job_id); }
+    catch (e) { status("server unreachable: " + e.message, true); return; }
+    if (res.status === "running") {
+      status(`${m.mode} running… ${Math.round(res.elapsed_s)} s`);
+      setTimeout(poll, 2000);
+    } else if (res.status === "error") {
+      status(res.error, true);
+    } else {
+      applyPlan(res);
+    }
+  };
+  poll();
+}
+function applyPlan(res) {
+  plan = res; tCur = 0; pinOpen = null;
+  const s = res.summary;
+  const row = r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`;
+  // Site info collapses by default for element-anchored (preset) orbits,
+  // where the launch site doesn't apply.
+  $("summary").innerHTML =
+    `<details class="modbox" style="border-top:none;margin-top:0;padding-top:0"
+              ${activePreset ? "" : "open"}>
+       <summary class="lbl">launch site info</summary><table>` + [
+      ["site", s.site],
+      ["launch azimuth", s.launch_azimuth_deg == null ? "—" : s.launch_azimuth_deg + "°"],
+    ].map(row).join("") + "</table></details><table>" + [
+      ["period", (s.period_s/60).toFixed(1) + " min"],
+      ["revs / day", s.revs_per_day],
+      ["raan drift", s.raan_drift_deg_per_day + "°/day"],
+    ].map(row).join("") + "</table>";
+  drawDecay(res.track);
+  const shape = s.e > 1e-4
+    ? `${s.perigee_km.toFixed(0)}×${s.apogee_km.toFixed(0)} km`
+    : `${s.alt_km.toFixed(0)} km`;
+  const stamp = new Date().toISOString().slice(11, 19) + "Z";
+  status(`planned ${s.site} · ${shape} / ${s.inc_deg}° · `
+    + `${s.revs_per_day} rev/day` + (res.track.entry ? " · DECAYS — see entry" : "")
+    + ` (${stamp})`);
+  $("elements").innerHTML = "<div class='lbl'>orbital elements @ epoch</div><table>" + [
+    ["a", s.a_km.toFixed(1) + " km"], ["e", s.e.toFixed(5)],
+    ["i", s.inc_deg + "°"], ["&Omega; (RAAN)", s.raan_deg + "°"],
+    ["&omega; (arg perigee)", s.argp_deg + "°"], ["&nu;&#8320;", s.nu0_deg + "°"],
+  ].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") + "</table>";
+  setWindow(0, 1);
+  MP.live(MP._onPlan).forEach(cb => cb(plan));
+}
+function drawDecay(tr) {
+  const box = $("decaybox");
+  if (!tr.decay_profile) { box.style.display = "none"; return; }
+  box.style.display = "block";
+  const p = tr.decay_profile, svg = $("spark");
+  svg.innerHTML = "";
+  const W = 300, H = 64; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const t1 = p.t[p.t.length-1], aMin = Math.min(...p.alt_km), aMax = Math.max(...p.alt_km);
+  // Don't let a small oscillation (J2 / oblate-geodetic wiggle) fill the
+  // whole plot height: enforce a minimum y-span relative to altitude.
+  const minSpan = Math.max(30, 0.25 * aMax);
+  let lo = aMin, hi = aMax;
+  if (hi - lo < minSpan) {
+    const c = (hi + lo) / 2;
+    lo = Math.max(0, c - minSpan / 2);
+    hi = lo + minSpan;
+  }
+  const sx = t => 4 + (t / Math.max(t1,1)) * (W - 44);
+  const sy = a => 6 + (hi - a) / (hi - lo) * (H - 18);
+  // 100 km entry interface, when in range
+  if (lo < 100 && hi > 100) {
+    el("line", { x1:4, y1:sy(100), x2:W-44, y2:sy(100), stroke:C.red,
+                 "stroke-width":.7, "stroke-dasharray":"3 3", opacity:.5 }, svg);
+  }
+  el("polyline", { points: p.t.map((t,i) => sx(t).toFixed(1)+","+sy(p.alt_km[i]).toFixed(1)).join(" "),
+                   fill:"none", stroke:C.blue, "stroke-width":1.5 }, svg);
+  el("text", { x:W-38, y:sy(hi)+8, "font-size":10, fill:C.muted }, svg)
+    .textContent = Math.round(hi);
+  el("text", { x:W-38, y:sy(lo)+2, "font-size":10, fill:C.muted }, svg)
+    .textContent = Math.round(lo) + " km";
+  let msg = tr.entry
+    ? "entry " + tr.entry.epoch_utc.replace("T"," ").slice(0,16) + "Z @ "
+      + tr.entry.lat_deg.toFixed(1) + ", " + tr.entry.lon_deg.toFixed(1)
+    : "";
+  if (tr.impact)
+    msg += " — impact @ " + tr.impact.lat_deg.toFixed(1) + ", "
+      + tr.impact.lon_deg.toFixed(1);
+  $("entrybox").textContent = msg;
+}
+// Move playback to a given seconds-past-epoch, widening the display window
+// if the instant falls outside it.  Exposed to modules as ctx.seek.
+function seekTo(ts) {
+  if (!plan) return;
+  const tEnd = plan.track.t[plan.track.t.length - 1];
+  tCur = Math.max(0, Math.min(ts, tEnd));
+  if (tCur < win[0] * tEnd || tCur > win[1] * tEnd) setWindow(0, 1);
+  const lo = win[0] * tEnd, hi = win[1] * tEnd;
+  $("scrub").value = Math.round(1000 * (tCur - lo) / Math.max(hi - lo, 1e-9));
+  updateClock(); redraw();
+}
+$("plan").onclick = doPlan;
+
+// ------------------------------------------------------------ live controls
+const live = [["hours","hoursv"],["pofs","pofsv"]];
+for (const [a,b] of live) {
+  $(a).oninput = () => $(b).textContent = $(a).value;
+  $(b).textContent = $(a).value;
+}
+// Inclination is the one control with two resolutions.  The input keeps its
+// native 0.01 deg so a COMPUTED inclination (SSO sync, a preset, anything
+// set programmatically) survives assignment intact -- the step attribute
+// would silently round it.  A hand-dragged slider snaps to a round 0.1 deg
+// instead, and arrow keys (below) move a whole 0.1.
+let incShown = +$("inc").value;
+function setInc(v) {                    // the one way inclination is written
+  $("inc").value = v;
+  $("incv").textContent = $("inc").value;
+  incShown = +$("inc").value;
+}
+const incClamp = v => Math.min(120, Math.max(0, v)).toFixed(1);
+$("inc").oninput = () => setInc(incClamp(Math.round(+$("inc").value * 10) / 10));
+// Arrow keys move by the input's own 0.01, which oninput would round straight
+// back onto the current value -- the slider would look stuck.  Handle them
+// here as a full 0.1 step instead.
+$("inc").addEventListener("keydown", ev => {
+  const d = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[ev.key];
+  if (d === undefined) return;
+  ev.preventDefault();
+  // Step to the next 0.1 gridline, so an arrow off a computed value like
+  // 98.19 lands on 98.2 / 98.1 rather than 98.29.
+  setInc(incClamp(d > 0 ? Math.floor(incShown * 10 + 1e-6) / 10 + 0.1
+                        : Math.ceil(incShown * 10 - 1e-6) / 10 - 0.1));
+});
+setInc($("inc").value);
+// Perigee: the number field is the source of truth; the slider is a
+// quick-set for the LEO range (values above 1000 km live in the field).
+$("alt").oninput = () => { $("peri").value = $("alt").value; periSync(); };
+$("peri").oninput = () => { $("alt").value = $("peri").value; periSync(); };
+function periSync() {
+  $("altv").textContent = $("peri").value;
+  const ell = +$("apo").value > +$("peri").value;
+  $("pofs").disabled = !ell || !!activePreset;
+  $("pofslbl").style.opacity = $("pofs").disabled ? 0.45 : 1;
+  ssoSync();
+}
+$("apo").oninput = periSync;
+periSync();
+
+// ------------------------------------------------------------ orbit presets
+// Element-anchored classics: no launch site; RAAN from node/station longitude.
+let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, sso?, sub?} from /api/presets
+function buildPresets(list) {
+  PRESETS = {};
+  for (const p of list)
+    PRESETS[p.name] = { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
+                        argp: p.argp_deg, node_lon: p.node_lon_deg, pack: p.pack,
+                        sso: !!p.sun_synchronous,
+                        sub: p.sun_synchronous ? () => ssoRepeatOptions() : undefined };
+  const cur = $("preset").value;
+  $("preset").innerHTML = "<option value=''>custom (launch site)</option>"
+    + list.map(p => `<option>${escHtml(p.name)}</option>`).join("");
+  if (cur && PRESETS[cur]) $("preset").value = cur;
+  else if (cur) { $("preset").value = ""; $("preset").onchange(); }
+}
+// Repeat-ground-track sun-synchronous family: exactly j revs per solar day.
+// For an SSO the node tracks the mean sun, so the repeat condition is a
+// draconitic period of 86400/j s; iterate a with the J2 rates and the
+// altitude-dependent SSO inclination.
+function ssoRepeatOptions() {
+  const RE = 6378.137, MU = 398600.4418, J2 = 1.08262668e-3;
+  const rate = 2 * Math.PI / (365.2422 * 86400);
+  const out = [];
+  for (let j = 16; j >= 12; j--) {
+    const T = 86400 / j;
+    let a = Math.cbrt(MU * (T / (2 * Math.PI)) ** 2), inc = 98;
+    for (let it = 0; it < 25; it++) {
+      const n = Math.sqrt(MU / a ** 3), k = 1.5 * J2 * (RE / a) ** 2 * n;
+      const ci = -rate / k;
+      if (Math.abs(ci) > 1) { a = NaN; break; }
+      const du = n + 0.5 * k * (5 * ci * ci - 1) + 0.5 * k * (3 * ci * ci - 1);
+      a *= Math.cbrt((du * T / (2 * Math.PI)) ** 2);
+      inc = Math.acos(ci) * 180 / Math.PI;
+    }
+    const h = a - RE;
+    if (h > 150 && h < 2500)
+      out.push({ label: `${j} rev/day — ${h.toFixed(0)} km, ${inc.toFixed(2)}°`,
+                 hp: +h.toFixed(1), ha: +h.toFixed(1) });
+  }
+  return out;
+}
+let subOptions = [];
+$("preset2").onchange = () => {
+  const o = subOptions[+$("preset2").value];
+  if (!o) return;
+  $("peri").value = o.hp; $("alt").value = o.hp;
+  $("apo").value = o.ha > o.hp ? o.ha : "";
+  periSync();
+};
+
+$("preset").onchange = () => {
+  const name = $("preset").value;
+  activePreset = name ? PRESETS[name] : null;
+  // Optional second-level dropdown (e.g. repeat-track SSO family).
+  subOptions = activePreset && activePreset.sub ? activePreset.sub() : [];
+  $("preset2row").style.display = subOptions.length ? "block" : "none";
+  $("preset2").innerHTML = "<option value=''>custom altitude</option>"
+    + subOptions.map((o, i) => `<option value="${i}">${o.label}</option>`).join("");
+  const siteMode = !activePreset;
+  $("sitebox").style.opacity = siteMode ? 1 : 0.4;
+  $("site").disabled = $("sitelat").disabled = $("sitelon").disabled
+    = $("leg").disabled = !siteMode;
+  $("nodelonrow").style.display = siteMode ? "none" : "block";
+  $("ltanrow").style.display = activePreset && activePreset.sso ? "block" : "none";
+  if (activePreset) {
+    $("peri").value = activePreset.hp; $("alt").value = activePreset.hp;
+    $("apo").value = activePreset.ha > activePreset.hp ? activePreset.ha : "";
+    setInc(activePreset.inc);
+    $("nodelon").value = activePreset.node_lon ?? 0;
+    status(`preset ${name} — adjust if needed, then plan.`);
+    ssoSync();
+  } else {
+    status("custom orbit over a launch site.");
+  }
+  periSync();
+};
+
+// Sun-synchronous epoch sync: exact inclination for the current hp/ha, and
+// node longitude from the requested LTAN at the chosen epoch (mean sun; the
+// equation of time adds up to ~16 min that planning can ignore).
+function ssoSync() {
+  if (!activePreset || !activePreset.sso) return;
+  const RE = 6378.137, MU = 398600.4418, J2 = 1.08262668e-3;   // km, km^3/s^2
+  const hp = +$("peri").value, ha = Math.max(+$("apo").value || hp, hp);
+  const a = RE + (hp + ha) / 2;
+  const e = (ha - hp) / (2 * RE + hp + ha);              // (ra-rp)/(ra+rp)
+  const p = a * (1 - e * e);
+  const n = Math.sqrt(MU / (a * a * a));
+  const k = 1.5 * J2 * (RE / p) ** 2 * n;
+  const rateReq = 2 * Math.PI / (365.2422 * 86400);      // +0.9856 deg/day
+  const ci = -rateReq / k;
+  if (Math.abs(ci) > 1) {
+    status("no sun-synchronous inclination exists at this altitude", true);
+    return;
+  }
+  const inc = (Math.acos(ci) * 180 / Math.PI);
+  setInc(inc.toFixed(2));                // keeps both decimals
+  const shown = $("inc").value;
+  const ep = $("epoch").value;
+  const utcH = ep ? (+ep.slice(11, 13)) + (+ep.slice(14, 16)) / 60 : 12;
+  let lam = ((+$("ltan").value - utcH) * 15 + 540) % 360;
+  $("nodelon").value = ((lam + 360) % 360 - 180).toFixed(1);
+  status(`SSO synced: inc ${shown}° for ${hp}×${ha} km, `
+    + `node ${$("nodelon").value}° for LTAN ${$("ltan").value} h`);
+}
+$("ltan").oninput = ssoSync;
+$("epoch").onchange = ssoSync;
+$("mode").onchange = () => $("betarow").style.display =
+  modeInfo($("mode").value).needs_beta ? "block" : "none";
+$("site").onchange = () => {
+  const s = sitesList.find(x => x.name === $("site").value);
+  if (s) {
+    $("sitelat").value = s.lat; $("sitelon").value = s.lon;
+    // A site can only inject into inc >= |lat|: bump the slider if needed.
+    const need = Math.abs(s.lat);
+    if (+$("inc").value < need) {
+      setInc(Math.ceil(need * 2) / 2);
+      status(`inclination raised to ${$("inc").value}° — minimum from `
+        + `${s.name} (|lat| = ${need}°)`);
+    }
+  }
+};
+$("sitelat").oninput = $("sitelon").oninput = () => { $("site").value = "custom"; };
+
+// ------------------------------------------------------------ display menu + catalog
+$("disp_horizon").onchange = () => { display.horizon = $("disp_horizon").checked; redraw(); };
+$("disp_night").onchange = () => { display.night = $("disp_night").checked; redraw(); };
+
+function buildOverlayList() {
+  $("overlaylist").innerHTML = overlayList.length
+    ? "<div class='lbl'>map overlays</div>" + overlayList.map(ov => {
+        const key = escHtml(ov.pack + "/" + ov.id);
+        return `<label class="chk" title="${escHtml(ov.pack)}">
+          <input type="checkbox" data-ov="${key}" ${overlayOff.has(ov.pack + "/" + ov.id) ? "" : "checked"}>
+          <span class="sw" style="background:${ov.style.color || C.red}"></span>${escHtml(ov.name)}
+        </label>`; }).join("")
+    : "";
+  document.querySelectorAll("[data-ov]").forEach(cb => cb.onchange = () => {
+    (cb.checked ? overlayOff.delete(cb.dataset.ov) : overlayOff.add(cb.dataset.ov));
+    redraw();
+  });
+}
+function buildSites() {
+  const cur = $("site").value;
+  $("site").innerHTML = sitesList.map(s => `<option>${escHtml(s.name)}</option>`).join("")
+    + "<option value='custom'>custom…</option>";
+  if (cur === "custom" || sitesList.some(s => s.name === cur)) $("site").value = cur;
+  else $("site").onchange();
+}
+// Sites, presets and overlays: the core catalog plus every active data pack.
+async function refreshCatalogs() {
+  let presets;
+  [sitesList, presets, overlayList] = await Promise.all(
+    [api("/api/sites"), api("/api/presets"), api("/api/overlays")]);
+  buildSites();
+  buildPresets(presets);
+  buildOverlayList();
+}
+
+// ------------------------------------------------------------ capability modules
+// Built-ins and plugins (see mission_planner/plugins.py) ship a JS asset that
+// calls MP.register to add a side-panel section.  Every hook a module
+// registers is stored as {mod, fn} and the core only calls MP.live() ones, so
+// an inactive plugin (switched off, or waiting on a requirement) hides its
+// panel and its map layers, clicks, plan callbacks and display rows go inert;
+// the server gates its routes, modes and data the same way.  A loaded script
+// can't be un-run, but inert is indistinguishable from unloaded.
+const MP = {
+  _onPlan: [],
+  _layers: [],     // module map layers, drawn each redraw under the track
+  _over: [],       // ... and these on top of it
+  _clicks: [],     // module handlers for a click on the map
+  mods: {},        // name -> /api/modules record, plus the module's UI once registered
+  on: name => MP.mods[name]?.active !== false,
+  live: hooks => hooks.filter(h => MP.on(h.mod)).map(h => h.fn),
+  register(mod) {
+    // loadModules tags each module's <script> with its name.
+    const name = document.currentScript?.dataset.module ?? mod.title;
+    const rec = (MP.mods[name] ??= { name, title: mod.title, status: "loaded",
+                                      enabled: true, active: true });
+    rec.displayRows = [];
+    // Collapsible box, closed by default unless the module says open.
+    const box = document.createElement("details");
+    box.className = "modbox";
+    if (mod.open) box.open = true;
+    box.hidden = !rec.active;
+    box.innerHTML = `<summary class="lbl">${mod.title}</summary>` + mod.html;
+    $("modulebox").appendChild(box);
+    rec.box = box;
+    const hook = (list, drawsOnMap) => fn => {
+      list.push({ mod: name, fn });
+      if (drawsOnMap) rec.map = true;
+    };
+    try {
+      mod.init({
+        api,
+        status,
+        redraw,
+        getPlan: () => plan,
+        // Current orbit query string, so a module can ask the backend about
+        // the very orbit the panel describes (mode/beta included).
+        planArgs: () => new URLSearchParams(args()),
+        // The module's own collapsible section.  A module that puts graphics
+        // on the map should draw nothing while its panel is closed, and can
+        // wake up (fetch, redraw) when the user opens it.  An inactive
+        // plugin's panel counts as closed.
+        isOpen: () => MP.on(name) && box.open,
+        onToggle: cb => box.addEventListener("toggle", () => cb(box.open)),
+        onPlan: hook(MP._onPlan, false),
+        onDraw: hook(MP._layers, true),
+        onDrawOver: hook(MP._over, true),
+        // fn(lat, lon) for a click on the map; a module that paints only while
+        // its panel is open should gate on isOpen() here too.
+        onClick: hook(MP._clicks, true),
+        // A checkbox row in the core display menu; returns the <input>.
+        addDisplayToggle: (label, checked, cb) => {
+          const row = document.createElement("label");
+          row.className = "chk";
+          row.hidden = !rec.active;
+          row.innerHTML = `<input type="checkbox" ${checked ? "checked" : ""}> ${escHtml(label)}`;
+          const input = row.querySelector("input");
+          input.onchange = () => cb(input.checked);
+          $("displayextra").appendChild(row);
+          rec.displayRows.push(row);
+          return input;
+        },
+        seek: ts => seekTo(ts),
+      });
+    } catch (e) {
+      console.error(`plugin ${name} init:`, e);
+      rec.jsError = String(e);
+    }
+    renderPlugins();
+  },
+  // Merge a fresh /api/modules inventory and bring the UI in line with it.
+  async apply(list) {
+    const was = Object.fromEntries(Object.values(MP.mods).map(m => [m.name, m.active]));
+    let catalogChanged = false;
+    for (const m of list) {
+      const rec = Object.assign(MP.mods[m.name] ??= {}, m);
+      if (rec.box) rec.box.hidden = !rec.active;
+      (rec.displayRows || []).forEach(r => r.hidden = !rec.active);
+      if (rec.catalog && was[m.name] !== undefined && was[m.name] !== rec.active)
+        catalogChanged = true;
+    }
+    if (catalogChanged) await refreshCatalogs();
+    buildModeSelect();
+    renderPlugins();
+    // Catch newly active modules up on the plan they missed.
+    if (plan)
+      for (const m of list)
+        if (m.active && was[m.name] === false)
+          MP._onPlan.filter(h => h.mod === m.name).forEach(h => h.fn(plan));
+    redraw();
+  },
+  async toggle(name, enabled) {
+    let list;
+    try {
+      const r = await fetch("/api/modules/" + encodeURIComponent(name), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }) });
+      list = await r.json();
+      if (!r.ok) throw new Error(list.error);
+    } catch (e) {
+      status("plugin toggle failed: " + e.message, true);
+      renderPlugins();
+      return;
+    }
+    await MP.apply(list);
+    const m = MP.mods[name];
+    status(`plugin ${m.title} ${m.enabled ? "on" : "off"}`
+      + (m.enabled && !m.active && m.waiting_on ? ` — waiting on ${m.waiting_on}` : "") + ".");
+  },
+};
+
+const escHtml = s => String(s).replace(/[&<>"]/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+function renderPlugins() {
+  const all = Object.values(MP.mods).filter(m => !m.builtin);
+  const ok = all.filter(m => m.status === "loaded");
+  const nFailed = all.filter(m => m.status === "failed").length;
+  const nUnavail = all.filter(m => m.status === "unavailable").length;
+  $("pluginsum").innerHTML = `plugins · ${ok.filter(m => m.active).length}/${ok.length} active`
+    + (nUnavail ? ` · ${nUnavail} unavailable` : "")
+    + (nFailed ? ` · <span style="color:var(--red)">${nFailed} failed</span>` : "");
+  $("pluginlist").innerHTML = all.length ? all.map(m => {
+    const loaded = m.status === "loaded";
+    const badges = [
+      m.js_url && "panel", m.routes && "routes", m.map && "map",
+      ...(m.modes || []).map(x => "mode " + x.mode), m.catalog && "data",
+      m.mcp_tools?.length && `mcp ×${m.mcp_tools.length}`,
+      ...(m.requires || []).map(r => "needs " + r),
+    ].filter(Boolean).map(b => `<span class="badge">${escHtml(b)}</span>`).join(" ");
+    let note = "";
+    if (m.status === "failed") note = `<span class="err">failed: ${escHtml(m.error)}</span>`;
+    else if (m.status === "unavailable") note = `<span class="why">unavailable: ${escHtml(m.error)}</span>`;
+    else if (m.jsError) note = `<span class="err">js error: ${escHtml(m.jsError)}</span>`;
+    else if (m.enabled && !m.active && m.waiting_on)
+      note = `<span class="why">waiting on ${escHtml(m.waiting_on)}</span>`;
+    const cls = ["plug", m.status === "failed" ? "failed" : "",
+                 m.status === "unavailable" ? "unavail" : "", m.active ? "" : "off"].join(" ");
+    return `<label class="${cls}" title="${escHtml(m.description || m.name)}">
+      <input type="checkbox" data-plug="${escHtml(m.name)}"
+        ${m.enabled && loaded ? "checked" : ""} ${loaded ? "" : "disabled"}>
+      <span class="name">${escHtml(m.title)}</span>
+      <span class="badges">${badges}</span> ${note}
+    </label>`;
+  }).join("") : "<div class='hint'>no plugins installed</div>";
+  document.querySelectorAll("[data-plug]").forEach(cb =>
+    cb.onchange = () => MP.toggle(cb.dataset.plug, cb.checked));
+}
+
+async function loadModules() {
+  const list = await api("/api/modules");
+  for (const m of list) {
+    MP.mods[m.name] = m;
+    if (m.status !== "loaded" || !m.js_url) continue;
+    const s = document.createElement("script");
+    s.src = m.js_url;
+    s.dataset.module = m.name;
+    document.body.appendChild(s);
+  }
+  // A broken plugin shouldn't be something you have to go looking for.
+  if (list.some(m => !m.builtin && m.status === "failed")) $("pluginbox").open = true;
+  buildModeSelect();
+  renderPlugins();
+}
+
+// ------------------------------------------------------------ scene push (SSE)
+function listenScenes() {
+  const es = new EventSource("/api/events");
+  es.onmessage = async () => {
+    const res = await api("/api/scene");
+    if (res.scene) { scene = res.scene; redraw(); }
+  };
+  es.onerror = () => { es.close(); setTimeout(listenScenes, 3000); };
+}
+
+// ------------------------------------------------------------ boot
+(async function () {
+  const now = new Date();
+  $("epoch").value = now.toISOString().slice(0, 16);
+  [coast] = await Promise.all([api("/api/coastline"), refreshCatalogs()]);
+  $("site").onchange();
+  redraw();
+  listenScenes();
+  loadModules();
+})();
+</script>
+</body>
+</html>

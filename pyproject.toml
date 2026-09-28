@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mission-planner"
+version = "0.1.0"
+description = "Generic orbital mission planning: launch-site orbit design, J2/drag-decay propagation, overflight search, web UI + MCP server, plugin API"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Hahn Aero" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering",
+    "Private :: Do Not Upload",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",  # atmosphere_1976_1000km lookup tables
+    "pyyaml>=6.0",  # catalog: sites / presets / overlay sidecars
+]
+
+[project.optional-dependencies]
+ui = ["flask>=3.0"]
+mcp = ["mcp[cli]>=1.0"]
+dev = ["pytest>=8.0", "flask>=3.0"]
+
+[tool.setuptools.packages.find]
+include = ["mission_planner*"]
+
+[tool.setuptools.package-data]
+mission_planner = ["data/*.geojson", "data/catalog/*.yaml", "static/*.html", "static/modules/*"]

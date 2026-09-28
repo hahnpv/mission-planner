@@ -1,0 +1,10 @@
+# Core launch-site catalog: well-known public sites.  Data packs add more.
+# Custom sites need no entry: LaunchSite("name", lat, lon) / the UI's custom row.
+- {name: "Cape Canaveral / KSC", lat: 28.5, lon: -80.6}
+- {name: Vandenberg, lat: 34.7, lon: -120.6}
+- {name: Wallops, lat: 37.8, lon: -75.5}
+- {name: Kodiak, lat: 57.4, lon: -152.3}
+- {name: Boca Chica, lat: 25.99, lon: -97.16}
+- {name: Kourou, lat: 5.2, lon: -52.8}
+- {name: Baikonur, lat: 45.9, lon: 63.3}
+- {name: Mahia, lat: -39.3, lon: 177.9}

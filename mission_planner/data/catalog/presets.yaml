@@ -1,0 +1,10 @@
+# Core orbit presets: element-anchored textbook orbits (no launch site; the
+# ascending node sits over node_lon_deg at the epoch).  sun_synchronous
+# presets get the exact SSO inclination / LTAN sync and the repeat-track
+# family in the UI.  Data packs add more.
+- {name: ISS, perigee_km: 400, apogee_km: 400, inc_deg: 51.6}
+- {name: Sun-synchronous, perigee_km: 700, apogee_km: 700, inc_deg: 98.2, sun_synchronous: true}
+- {name: GPS / MEO, perigee_km: 20180, apogee_km: 20180, inc_deg: 55}
+- {name: GTO, perigee_km: 250, apogee_km: 35786, inc_deg: 28.5, argp_deg: 180}
+- {name: Molniya, perigee_km: 500, apogee_km: 39868, inc_deg: 63.4, argp_deg: 270, node_lon_deg: 65}
+- {name: GEO, perigee_km: 35786, apogee_km: 35786, inc_deg: 0, node_lon_deg: -100}
