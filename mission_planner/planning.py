@@ -14,6 +14,7 @@ import numpy as np
 from .constants import RE
 from .launch_site import SITES, LaunchSite
 from .orbit import Orbit
+from .plugins import CORE_SOURCES
 
 DEFAULT_SITE = "Cape Canaveral / KSC"
 
@@ -24,20 +25,43 @@ def parse_epoch(s: str | None) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+def source_of(a) -> str:
+    """The trajectory source a request names: `source=`, else the pre-source
+    convention (anchor=elements for a preset, a launch site otherwise)."""
+    return a.get("source") or ("preset" if a.get("anchor") == "elements" else "site")
+
+
+def _plugin_source(sid: str) -> dict:
+    from .plugins import registry
+
+    return registry().source(sid)
+
+
 def orbit_from_args(a) -> tuple[Orbit, dict]:
-    """Orbit from the web UI's query args (hp/ha/inc/epoch/site|lat,lon|anchor=elements…)."""
+    """Orbit from the web UI's query args: a core source (site: hp/ha/inc/epoch/
+    site|lat,lon/leg/pofs; preset: the same shape plus node_lon/argp) or a
+    plugin's orbit source.  A trajectory source has no orbit: ValueError."""
+    sid = source_of(a)
+    if sid not in CORE_SOURCES:
+        sp = _plugin_source(sid)
+        if sp["kind"] != "orbit":
+            raise ValueError(f"source {sid!r} gives a finished trajectory, not an orbit")
+        orb, meta = sp["fn"](a)
+        return orb, {"source": sid, "kind": "orbit", **meta}
     hp = float(a.get("hp", a.get("alt", 400.0)))
     ha = float(a["ha"]) if a.get("ha") not in (None, "") else hp
     pofs = float(a.get("pofs", 0.0))
     inc = float(a.get("inc", 51.6))
     epoch = parse_epoch(a.get("epoch"))
-    if a.get("anchor") == "elements":
+    if sid == "preset":
         # No launch site: anchored by ascending-node (or GEO station) longitude.
         node_lon = float(a.get("node_lon", 0.0))
         orb = Orbit.from_elements(
             hp, ha, inc, epoch, node_lon_deg=node_lon, argp_deg=float(a.get("argp", 0.0))
         )
         return orb, {
+            "source": "preset",
+            "kind": "orbit",
             "site": "— (elements)",
             "site_lat": None,
             "site_lon": None,
@@ -63,6 +87,8 @@ def orbit_from_args(a) -> tuple[Orbit, dict]:
         perigee_offset_deg=pofs,
     )
     meta = {
+        "source": "site",
+        "kind": "orbit",
         "site": site.name,
         "site_lat": site.lat_deg,
         "site_lon": site.lon_deg,
@@ -72,6 +98,14 @@ def orbit_from_args(a) -> tuple[Orbit, dict]:
 
 
 def track_from_args(a):
+    """(orbit, meta, GroundTrack) for any source; orbit is None for a
+    trajectory source, whose track comes finished (no mode/hours/dt)."""
+    sid = source_of(a)
+    if sid not in CORE_SOURCES:
+        sp = _plugin_source(sid)
+        if sp["kind"] == "trajectory":
+            gt, meta = sp["fn"](a)
+            return None, {"source": sid, "kind": "trajectory", **meta}, gt
     orb, meta = orbit_from_args(a)
     hours = float(a.get("hours", 24.0))
     dt = float(a.get("dt", 30.0))
@@ -81,9 +115,18 @@ def track_from_args(a):
     return orb, meta, gt
 
 
+def plan_from_args(a) -> dict:
+    """The /api/plan JSON for any trajectory source."""
+    return plan_payload(*track_from_args(a))
+
+
 def plan_payload(orb, meta, gt) -> dict:
-    """The /api/plan JSON: orbit summary + track (+ first-rev apsides if elliptic)."""
+    """The /api/plan JSON: summary + track.  For an orbit the summary carries its
+    elements and the track its first-rev apsides (if elliptic); a finished
+    trajectory (orb None) has only its source's meta."""
     track = gt.to_json()
+    if orb is None:
+        return {"summary": dict(meta), "track": track}
     if orb.e > 1e-4:
         apsides = []
         for kind, ts in zip("PA", orb.apsis_times()):

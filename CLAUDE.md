@@ -31,8 +31,13 @@ API; the core must never import from it.
   `mission_planner.plugins` entry-point group.
 - New core capability → a built-in module; anything private or optional → a plugin. Don't grow
   `server.py`, `mcp_server.py` or `static/index.html` with feature code — core gets generic hooks
-  (propagation modes, catalog packs, View-menu toggles, map layers). Reusable math belongs in the
+  (propagation modes, trajectory sources, catalog packs, menu items, map layers). Reusable math belongs in the
   core library (e.g. `GroundTrack.passes()`), with the module as the UI/REST/MCP skin over it.
+- Trajectory sources: a plan comes from a source (`source=` arg; core `site`/`preset`, plugins
+  via spec key `sources` + `ctx.addSource`). Kind `orbit` returns an Orbit that gets propagated;
+  kind `trajectory` returns a finished GroundTrack. Modules declare `works_with` (default
+  `["orbit"]`) and go inert in the UI on plans of another kind; `orbit_from_args` raises
+  ValueError for a trajectory source.
 - Plugins import only the public core surface: `planning` (request args → orbit/track/payload),
   `jobs` (background work), `orbit.wrap_pi`, constants, groundtrack, timebase. Keep those stable;
   treat `_`-prefixed names as private.

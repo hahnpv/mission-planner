@@ -35,8 +35,8 @@ import time
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
 from . import catalog, jobs
-from .planning import plan_payload, track_from_args
-from .plugins import CORE_MODES, registry
+from .planning import plan_from_args, source_of
+from .plugins import CORE_MODES, CORE_SOURCES, registry
 from .scene import Scene
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -121,6 +121,16 @@ def create_app() -> Flask:
                 for m, p in (r.get("propagators") or {}).items()
             ],
             "catalog": r.get("catalog") is not None,
+            "sources": [
+                {
+                    "id": sid,
+                    "label": sp.get("label", sid),
+                    "kind": sp["kind"],
+                    "slow": bool(sp.get("slow")),
+                }
+                for sid, sp in (r.get("sources") or {}).items()
+            ],
+            "works_with": list(r.get("works_with", ["orbit"])),
         }
 
     @app.route("/api/modules")
@@ -151,22 +161,25 @@ def create_app() -> Flask:
     @app.route("/api/plan")
     def plan():
         try:
-            orb, meta, gt = track_from_args(request.args)
+            return jsonify(plan_from_args(request.args))
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
-        return jsonify(plan_payload(orb, meta, gt))
 
     @app.route("/api/plan_job", methods=["POST"])
     def plan_job_start():
         """Start a plan in the background; args as for /api/plan."""
         args = request.args.to_dict()
-        mode = args.get("mode", "kepler")
-        if mode not in CORE_MODES:
-            try:
-                _REG.propagator(mode)  # fail fast on an unknown/inactive mode
-            except ValueError as e:
-                return jsonify({"error": str(e)}), 400
-        return jsonify({"job_id": jobs.start(lambda: plan_payload(*track_from_args(args)))})
+        # Fail fast on an unknown/inactive source or mode (a trajectory
+        # source has no mode).
+        try:
+            sid = source_of(args)
+            kind = "orbit" if sid in CORE_SOURCES else _REG.source(sid)["kind"]
+            mode = args.get("mode", "kepler")
+            if kind == "orbit" and mode not in CORE_MODES:
+                _REG.propagator(mode)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"job_id": jobs.start(lambda: plan_from_args(args))})
 
     @app.route("/api/plan_job/<job_id>")
     def plan_job_poll(job_id):

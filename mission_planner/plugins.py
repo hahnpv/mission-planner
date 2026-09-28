@@ -3,7 +3,7 @@
 Two sources, one spec format:
 
 - **built-ins**: files in `mission_planner/modules/`.  Core features built on
-  the same contract; always active, never listed in the UI's plugins box.
+  the same contract; always active, never listed in the UI's Plugins menu.
 - **plugins**: installed packages that declare an entry point in the
   `mission_planner.plugins` group, e.g. in their pyproject.toml::
 
@@ -15,7 +15,7 @@ A spec is a dict (conventionally `MODULE`); every key but `name` is optional::
     api          int    plugin API version targeted (default 1; > API_VERSION fails)
     name         str    slug: the dependency handle and MP_DISABLE_MODULES key
     title        str    UI label
-    description  str    one line for the plugins box
+    description  str    one line for the Plugins menu
     requires     [str]  names of plugins this one needs (dependency chains, below)
     available    () -> str | None
                         runtime precondition, checked once at load; returns the
@@ -29,6 +29,18 @@ A spec is a dict (conventionally `MODULE`); every key but `name` is optional::
                         extra propagation modes beside the core's kepler/decay;
                         "slow" ones run as background jobs in the UI
     catalog      path   data-pack directory (sites/presets/overlays; see catalog.py)
+    sources      {id: {"fn": fn(args) -> (Orbit | GroundTrack, meta dict),
+                       "label": str, "kind": "orbit" | "trajectory", "slow": bool}}
+                        trajectory sources beside the core's site/preset: where a
+                        plan comes from.  An "orbit" source returns an Orbit that
+                        is then propagated (mode/hours/dt); a "trajectory" source
+                        returns a finished GroundTrack.  `args` are the request's
+                        query args (`source=<id>` plus whatever its UI sends); meta
+                        joins the plan summary; a "slow" trajectory source runs as
+                        a background job in the UI.  The UI half is ctx.addSource.
+    works_with   [kind] trajectory kinds the module's UI and routes make sense for
+                        (default ["orbit"]); against any other plan it goes inert
+                        in the UI as if switched off
 
 Dependency chains
 -----------------
@@ -60,6 +72,8 @@ GROUP = "mission_planner.plugins"
 CORE_STATIC = Path(__file__).parent / "static" / "modules"
 CORE_CATALOG = Path(__file__).parent / "data" / "catalog"
 CORE_MODES = ("kepler", "decay")
+CORE_SOURCES = ("site", "preset")  # launch site / element-anchored preset (planning.py)
+KINDS = ("orbit", "trajectory")
 
 # (key, builtin, loader) — loader returns the spec, or None for a helper file.
 Source = tuple[str, bool, Callable[[], dict | None]]
@@ -108,6 +122,19 @@ def _spec_error(spec) -> str | None:
     req = spec.get("requires", [])
     if not isinstance(req, (list, tuple)) or not all(isinstance(r, str) for r in req):
         return "'requires' must be a list of plugin names"
+    ww = spec.get("works_with", ["orbit"])
+    if not isinstance(ww, (list, tuple)) or not set(ww) <= set(KINDS):
+        return f"'works_with' must be a list of {'/'.join(KINDS)}"
+    sources = spec.get("sources", {})
+    if not isinstance(sources, dict):
+        return "'sources' must be a dict of id -> source spec"
+    for sid, sp in sources.items():
+        if sid in CORE_SOURCES:
+            return f"source '{sid}' is a core source"
+        if not isinstance(sp, dict) or not callable(sp.get("fn")):
+            return f"source '{sid}' needs a callable 'fn'"
+        if sp.get("kind") not in KINDS:
+            return f"source '{sid}' kind must be one of {'/'.join(KINDS)}"
     return None
 
 
@@ -203,22 +230,29 @@ class Registry:
     def active_records(self) -> list[Record]:
         return [r for r in self.records.values() if self.active(r.name)]
 
-    def propagator(self, mode: str) -> dict:
-        """The propagator spec for a plugin-provided mode, if its plugin is active."""
+    def _provided(self, key: str, item: str, what: str, core: tuple[str, ...]) -> dict:
+        """The spec for `item` under plugin spec key `key`, if its plugin is active;
+        otherwise a ValueError naming the plugin and why (or the known items)."""
         for r in self.records.values():
-            p = (r.get("propagators") or {}).get(mode)
-            if p is None:
+            sp = (r.get(key) or {}).get(item)
+            if sp is None:
                 continue
             if self.active(r.name):
-                return p
+                return sp
             why = r.error or (
                 f"waiting on '{self.waiting_on(r.name)}'" if r.enabled else "switched off"
             )
-            raise ValueError(f"mode {mode!r} comes from plugin '{r.name}', which is {why}")
-        known = list(CORE_MODES) + [
-            m for r in self.active_records() for m in r.get("propagators") or {}
-        ]
-        raise ValueError(f"unknown mode {mode!r} ({'|'.join(known)})")
+            raise ValueError(f"{what} {item!r} comes from plugin '{r.name}', which is {why}")
+        known = list(core) + [x for r in self.active_records() for x in r.get(key) or {}]
+        raise ValueError(f"unknown {what} {item!r} ({'|'.join(known)})")
+
+    def propagator(self, mode: str) -> dict:
+        """The propagator spec for a plugin-provided mode, if its plugin is active."""
+        return self._provided("propagators", mode, "mode", CORE_MODES)
+
+    def source(self, sid: str) -> dict:
+        """The spec for a plugin-provided trajectory source, if its plugin is active."""
+        return self._provided("sources", sid, "source", CORE_SOURCES)
 
     def catalog_dirs(self) -> list[tuple[str, Path]]:
         """(pack name, dir) in load order: the core's own catalog first."""

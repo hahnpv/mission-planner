@@ -44,4 +44,6 @@ MODULE = {
     "blueprint": bp,
     "js": "passes.js",
     "mcp_tools": [],
+    # Pass search needs only a track, so it works on finished trajectories too.
+    "works_with": ["orbit", "trajectory"],
 }

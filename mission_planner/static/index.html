@@ -141,8 +141,9 @@ details.modbox[open] summary { margin-bottom:6px; }
   <h1>Mission Planner</h1>
 
   <!-- Trajectory source: where the trajectory comes from.  Each source shows
-       only its own options; the orbit shape and propagation blocks follow for
-       sources that start from an orbit. -->
+       only its own panel; the orbit shape block follows for site/preset, the
+       propagation block for any orbit source.  Plugins add sources
+       (ctx.addSource), whose panels land in #srcpanels. -->
   <div class="lbl">trajectory source</div>
   <div class="seg" id="srcseg"></div>
 
@@ -177,7 +178,9 @@ details.modbox[open] summary { margin-bottom:6px; }
     </div>
   </div>
 
-  <div id="orbitform">
+  <div id="srcpanels"></div>
+
+  <div id="shapeform">
     <div class="lbl">perigee altitude <span id="altv" style="color:var(--ink)"></span> km</div>
     <input id="alt" type="range" min="120" max="1000" step="5" value="160">
     <div class="row" style="margin-top:2px">
@@ -190,7 +193,9 @@ details.modbox[open] summary { margin-bottom:6px; }
     </div>
     <div class="lbl">inclination <span id="incv" style="color:var(--ink)"></span> deg</div>
     <input id="inc" type="range" min="0" max="120" step="0.01" value="51.6">
+  </div>
 
+  <div id="propform">
     <div class="lbl" id="epochlbl">launch epoch (utc)</div>
     <input id="epoch" type="datetime-local" step="60">
 
@@ -206,9 +211,9 @@ details.modbox[open] summary { margin-bottom:6px; }
       <div class="lbl">ballistic coefficient β = m/(C<sub>d</sub>A) kg/m²</div>
       <input id="beta" type="number" step="10" value="300">
     </div>
-
-    <div style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
   </div>
+
+  <div id="planrow" style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
   <div id="status">set parameters, then plan.</div>
 
   <div id="modulebox"></div>
@@ -751,8 +756,9 @@ function redraw() {
       polyline(pts, { stroke:C.blue, "stroke-width": orbit3d ? .8 : 1.1,
                       opacity: orbit3d ? .25 : .45 });
     // Emphasize the orbit around the playback position: half a rev ahead
-    // and behind the satellite dot, clipped to the display window.
-    const halfP = plan.summary.period_s / 2;
+    // and behind the satellite dot, clipped to the display window.  A
+    // finished trajectory has no period: all of it.
+    const halfP = plan.summary.period_s ? plan.summary.period_s / 2 : Infinity;
     if (orbit3d) {
       const all = [], rev = [];
       for (let i = i0; i <= i1; i++) {
@@ -1026,29 +1032,26 @@ function setProj(mode) {
 }
 
 // ------------------------------------------------------------ planning
+// The request args for the current form: the source's own, then the shared
+// orbit shape (site/preset) and propagation (any orbit source).
 function args() {
-  const a = new URLSearchParams();
-  if (activePreset) {
-    a.set("anchor", "elements");
-    a.set("argp", activePreset.argp || 0);
-    a.set("node_lon", $("nodelon").value || 0);
-  } else {
-    const siteSel = $("site").value;
-    if (siteSel === "custom") { a.set("lat", $("sitelat").value || 0); a.set("lon", $("sitelon").value || 0); }
-    else a.set("site", siteSel);
-    a.set("leg", $("leg").value);
-    if ($("apo").value) a.set("pofs", $("pofs").value);
+  const src = currentSource(), a = new URLSearchParams();
+  a.set("source", src.id);
+  src.args(a);
+  if (src.shape) {
+    a.set("hp", $("peri").value); a.set("inc", $("inc").value);
+    if ($("apo").value) a.set("ha", $("apo").value);
   }
-  a.set("hp", $("peri").value); a.set("inc", $("inc").value);
-  if ($("apo").value) a.set("ha", $("apo").value);
-  a.set("hours", $("hours").value);
-  const ep = $("epoch").value;
-  if (ep) a.set("epoch", ep + ":00+00:00");
-  a.set("mode", $("mode").value);
-  if (modeInfo($("mode").value).needs_beta) a.set("beta", $("beta").value);
-  // dt: keep point count sane over long horizons
-  const dt = Math.max(30, Math.round(+$("hours").value * 3600 / 20000 / 10) * 10);
-  a.set("dt", dt);
+  if (src.kind === "orbit") {
+    a.set("hours", $("hours").value);
+    const ep = $("epoch").value;
+    if (ep) a.set("epoch", ep + ":00+00:00");
+    a.set("mode", $("mode").value);
+    if (modeInfo($("mode").value).needs_beta) a.set("beta", $("beta").value);
+    // dt: keep point count sane over long horizons
+    const dt = Math.max(30, Math.round(+$("hours").value * 3600 / 20000 / 10) * 10);
+    a.set("dt", dt);
+  }
   return a;
 }
 // Propagation modes: the core's two plus any an active plugin provides.
@@ -1078,8 +1081,12 @@ function buildModeSelect() {
   sel.onchange();
 }
 async function doPlan() {
-  const m = modeInfo($("mode").value);
-  if (m.slow) return doJobPlan(m);
+  const src = currentSource();
+  if (!src.ready()) return;
+  if (src.kind === "orbit") {
+    const m = modeInfo($("mode").value);
+    if (m.slow) return doJobPlan(m.mode);
+  } else if (src.slow) return doJobPlan(src.label);
   status("planning…");
   let res;
   try { res = await api("/api/plan?" + args()); }
@@ -1087,9 +1094,10 @@ async function doPlan() {
   if (res.error) { status(res.error, true); return; }
   applyPlan(res);
 }
-// Slow plugin modes run as a background job on the server; poll until done.
-async function doJobPlan(m) {
-  status(`starting ${m.mode} run…`);
+// Slow plugin modes and sources run as a background job on the server; poll
+// until done.  `what` names it in the status line.
+async function doJobPlan(what) {
+  status(`starting ${what} run…`);
   let job;
   try {
     job = await (await fetch("/api/plan_job?" + args(), { method: "POST" })).json();
@@ -1100,7 +1108,7 @@ async function doJobPlan(m) {
     try { res = await api("/api/plan_job/" + job.job_id); }
     catch (e) { status("server unreachable: " + e.message, true); return; }
     if (res.status === "running") {
-      status(`${m.mode} running… ${Math.round(res.elapsed_s)} s`);
+      status(`${what} running… ${Math.round(res.elapsed_s)} s`);
       setTimeout(poll, 2000);
     } else if (res.status === "error") {
       status(res.error, true);
@@ -1124,11 +1132,23 @@ function applyPlan(res) {
       ["launch azimuth", s.launch_azimuth_deg + "°"],
     ].map(row).join("") + "</table></details>";
   drawDecay(res.track);
+  // Modules that don't work with this kind of trajectory go inert before any
+  // onPlan callback runs.
+  syncModules();
+  // "1 rev" only means something for an orbit.
+  document.querySelector("[data-win=rev]").hidden = s.kind === "trajectory";
+  if (s.kind === "trajectory") {
+    status(`showing ${s.title || s.source} (${new Date().toISOString().slice(11, 19)}Z)`);
+    $("elements").innerHTML = "";
+    setWindow(0, 1);
+    MP.live(MP._onPlan).forEach(cb => cb(plan));
+    return;
+  }
   const shape = s.e > 1e-4
     ? `${s.perigee_km.toFixed(0)}×${s.apogee_km.toFixed(0)} km`
     : `${s.alt_km.toFixed(0)} km`;
   const stamp = new Date().toISOString().slice(11, 19) + "Z";
-  status(`planned ${s.site} · ${shape} / ${s.inc_deg}° · `
+  status(`planned ${s.title || s.site} · ${shape} / ${s.inc_deg}° · `
     + `${s.revs_per_day} rev/day` + (res.track.entry ? " · DECAYS — see entry" : "")
     + ` (${stamp})`);
   $("elements").innerHTML = "<div class='lbl'>orbit</div><table>" + [
@@ -1366,10 +1386,29 @@ $("sitelat").oninput = $("sitelon").oninput = () => { $("site").value = "custom"
 // the orbit form (shape, epoch, propagation, plan) follows once the source is
 // ready -- a preset source isn't until an orbit is picked.  Each source keeps
 // its own shape values, so switching back and forth doesn't cross them over.
+// A source: {id, label, kind: "orbit"|"trajectory", ready(), args(q)} plus
+// shape (uses the shared orbit-shape block), epochLabel, planLabel, slow, and
+// mod (the plugin that added it; its button shows only while that's active).
+// The server side is planning.py (core) or a plugin spec's `sources` key.
 const SOURCES = [
-  { id:"site", label:"Launch site", epochLabel:"launch epoch (utc)", ready: () => true },
-  { id:"preset", label:"Orbit preset", epochLabel:"epoch (utc)", ready: () => !!activePreset },
+  { id:"site", label:"Launch site", kind:"orbit", shape:true, epochLabel:"launch epoch (utc)",
+    ready: () => true,
+    args(a) {
+      if ($("site").value === "custom") {
+        a.set("lat", $("sitelat").value || 0); a.set("lon", $("sitelon").value || 0);
+      } else a.set("site", $("site").value);
+      a.set("leg", $("leg").value);
+      if ($("apo").value) a.set("pofs", $("pofs").value);
+    } },
+  { id:"preset", label:"Orbit preset", kind:"orbit", shape:true, epochLabel:"epoch (utc)",
+    ready: () => !!activePreset,
+    args(a) {
+      a.set("argp", activePreset.argp || 0);
+      a.set("node_lon", $("nodelon").value || 0);
+    } },
 ];
+const currentSource = () => SOURCES.find(x => x.id === source);
+const sourceShown = x => !x.mod || MP.active(x.mod);
 const SHAPE = ["peri", "apo", "inc", "pofs"];
 const shapeMemo = {};
 function setSource(id) {
@@ -1385,19 +1424,27 @@ function setSource(id) {
   showSource();
   periSync();
   if (id === "site") $("site").onchange();
-  status(id === "preset" && !activePreset ? "choose an orbit." : "set parameters, then plan.");
+  status(currentSource().ready() ? "set parameters, then plan." : "choose an orbit.");
 }
 function showSource() {
-  const src = SOURCES.find(x => x.id === source);
+  const src = currentSource(), ready = src.ready();
   for (const x of SOURCES) $("src_" + x.id).hidden = x.id !== source;
   document.querySelectorAll("#srcseg button").forEach(b => b.classList.toggle("on", b.dataset.src === source));
-  $("orbitform").hidden = !src.ready();
-  $("epochlbl").textContent = src.epochLabel;
+  $("shapeform").hidden = !(ready && src.shape);
+  $("propform").hidden = !(ready && src.kind === "orbit");
+  $("planrow").hidden = !ready;
+  $("plan").textContent = src.planLabel || (src.kind === "orbit" ? "plan orbit" : "show trajectory");
+  if (src.epochLabel) $("epochlbl").textContent = src.epochLabel;
 }
-$("srcseg").innerHTML = SOURCES.map(x =>
-  `<button class="small ghost" data-src="${x.id}">${x.label}</button>`).join("");
-document.querySelectorAll("#srcseg button").forEach(b => b.onclick = () => setSource(b.dataset.src));
-showSource();
+// The source buttons: core ones plus those of active plugins.  If the
+// current source's plugin went away, fall back to a launch site.
+function renderSources() {
+  $("srcseg").innerHTML = SOURCES.filter(sourceShown).map(x =>
+    `<button class="small ghost" data-src="${x.id}">${escHtml(x.label)}</button>`).join("");
+  document.querySelectorAll("#srcseg button").forEach(b => b.onclick = () => setSource(b.dataset.src));
+  if (!sourceShown(currentSource())) setSource("site");
+  showSource();
+}
 
 // ------------------------------------------------------------ catalog
 
@@ -1492,7 +1539,12 @@ const MP = {
   _over: [],       // ... and these on top of it
   _clicks: [],     // module handlers for a click on the map
   mods: {},        // name -> /api/modules record, plus the module's UI once registered
-  on: name => MP.mods[name]?.active !== false,
+  // active: switched on with its requirements met.  on: active AND it works
+  // with the kind of trajectory currently planned (spec key works_with);
+  // hooks, panels and menu items follow `on`.
+  active: name => MP.mods[name]?.active !== false,
+  on: name => MP.active(name)
+    && (!plan || (MP.mods[name]?.works_with ?? ["orbit"]).includes(plan.summary.kind ?? "orbit")),
   live: hooks => hooks.filter(h => MP.on(h.mod)).map(h => h.fn),
   register(mod) {
     // loadModules tags each module's <script> with its name.
@@ -1503,7 +1555,7 @@ const MP = {
     const box = document.createElement("details");
     box.className = "modbox";
     if (mod.open) box.open = true;
-    box.hidden = !rec.active;
+    box.hidden = !MP.on(name);
     box.innerHTML = `<summary class="lbl">${mod.title}</summary>` + mod.html;
     $("modulebox").appendChild(box);
     rec.box = box;
@@ -1549,6 +1601,26 @@ const MP = {
         addMenuItem: (menu, item) => menubar.add(menu, Object.assign({}, item, {
           visible: () => MP.on(name) && (!item.visible || item.visible()) })),
         seek: ts => seekTo(ts),
+        // A trajectory source: a button in the sidebar's source row and a
+        // panel of its own options.  spec: {id, label, html, init?(panel),
+        // ready?(), args?(q), planLabel?}; kind and slow come from the plugin's
+        // Python `sources` entry of the same id, which must exist.  Call
+        // updateSource() when ready() may have changed (e.g. a file chosen).
+        addSource: spec => {
+          const py = (rec.sources || []).find(x => x.id === spec.id);
+          if (!py) throw new Error(`source '${spec.id}' has no server side (spec key 'sources')`);
+          const panel = document.createElement("div");
+          panel.className = "srcpanel";
+          panel.id = "src_" + spec.id;
+          panel.hidden = true;
+          panel.innerHTML = spec.html || "";
+          $("srcpanels").appendChild(panel);
+          SOURCES.push({ ready: () => true, args: () => {}, ...spec,
+                         kind: py.kind, slow: py.slow, mod: name });
+          spec.init?.(panel);
+          renderSources();
+        },
+        updateSource: () => showSource(),
       });
     } catch (e) {
       console.error(`plugin ${name} init:`, e);
@@ -1562,14 +1634,13 @@ const MP = {
     let catalogChanged = false;
     for (const m of list) {
       const rec = Object.assign(MP.mods[m.name] ??= {}, m);
-      if (rec.box) rec.box.hidden = !rec.active;
       if (rec.catalog && was[m.name] !== undefined && was[m.name] !== rec.active)
         catalogChanged = true;
     }
     if (catalogChanged) await refreshCatalogs();
     buildModeSelect();
-    renderPlugins();
-    menubar.refresh();
+    renderSources();
+    syncModules();
     // Catch newly active modules up on the plan they missed.
     if (plan)
       for (const m of list)
@@ -1603,6 +1674,12 @@ const escHtml = s => String(s).replace(/[&<>"]/g,
 // The Plugins menu (built-ins aren't listed: they're always on).  The rows are
 // rebuilt every time it opens; this only refreshes an open menu and the red
 // dot that flags a plugin that failed to load.
+// Show each module's panel only while it's on (active and suited to the
+// current plan), and bring the menus in line.
+function syncModules() {
+  for (const m of Object.values(MP.mods)) if (m.box) m.box.hidden = !MP.on(m.name);
+  renderPlugins();
+}
 function renderPlugins() {
   const bad = Object.values(MP.mods).some(m => !m.builtin && (m.status === "failed" || m.jsError));
   menubar.flag("Plugins", bad && C.red);
@@ -1667,6 +1744,7 @@ function listenScenes() {
 (async function () {
   const now = new Date();
   $("epoch").value = now.toISOString().slice(0, 16);
+  renderSources();
   [coast] = await Promise.all([api("/api/coastline"), refreshCatalogs()]);
   $("site").onchange();
   redraw();

@@ -5,6 +5,7 @@ package installed.
 """
 
 import textwrap
+from datetime import datetime
 
 import pytest
 from flask import Blueprint, jsonify
@@ -57,6 +58,10 @@ def test_cycle_fails_its_members():
         ({"name": "a", "api": API_VERSION + 1}, "plugin API"),
         ({"name": "a", "requires": "b"}, "list of plugin names"),
         ({"title": "no name"}, "string 'name'"),
+        ({"name": "a", "works_with": ["orbit", "boat"]}, "'works_with'"),
+        ({"name": "a", "sources": {"site": {"fn": print, "kind": "orbit"}}}, "core source"),
+        ({"name": "a", "sources": {"s": {"kind": "orbit"}}}, "callable 'fn'"),
+        ({"name": "a", "sources": {"s": {"fn": print, "kind": "tle"}}}, "kind must be"),
     ],
 )
 def test_invalid_specs_fail(spec, why):
@@ -154,6 +159,29 @@ def _slow_mode(orbit, beta, duration_s, dt_s):
     return orbit.ground_track(duration_s, dt_s)
 
 
+def _orbit_source(a):
+    """An orbit source: a circular orbit at the requested altitude."""
+    return Orbit.circular(float(a.get("alt", 500.0)), 45.0), {"title": "fake orbit"}
+
+
+def _track_source(a):
+    """A finished trajectory: a straight line north from the equator."""
+    import numpy as np
+
+    from mission_planner.groundtrack import GroundTrack
+    from mission_planner.timebase import as_utc
+
+    n = int(a.get("n", 11))
+    gt = GroundTrack(
+        epoch=as_utc(datetime(2026, 8, 23)),
+        t=np.arange(n) * 10.0,
+        lat=np.radians(np.linspace(0.0, 10.0, n)),
+        lon=np.zeros(n),
+        alt=np.linspace(100e3, 0.0, n),
+    )
+    return gt, {"title": "fake track"}
+
+
 @pytest.fixture
 def fake(monkeypatch, tmp_path):
     specs = [
@@ -164,6 +192,10 @@ def fake(monkeypatch, tmp_path):
             "js": "fake.js",
             "static_dir": tmp_path,
             "propagators": {"slowfake": {"fn": _slow_mode, "label": "slow fake", "slow": True}},
+            "sources": {
+                "fakeorb": {"fn": _orbit_source, "label": "Fake orbit", "kind": "orbit"},
+                "faketrack": {"fn": _track_source, "label": "Fake track", "kind": "trajectory"},
+            },
         },
         {"name": "pack", "catalog": write_pack(tmp_path / "pack")},
         {"name": "needy", "requires": ["fakeplug"]},
@@ -240,3 +272,73 @@ def test_slow_mode_runs_as_a_plan_job(fake):
 def test_orbit_ground_track_reaches_plugin_modes(fake):
     orb = Orbit.circular(400.0, 51.6)
     assert len(orb.ground_track(3600.0, 60.0, mode="slowfake").lat) == 61
+
+
+# ---------------------------------------------------------------- trajectory sources
+
+
+def test_modules_endpoint_lists_sources_and_what_modules_work_with(fake):
+    client, _ = fake
+    mods = {m["name"]: m for m in client.get("/api/modules").get_json()}
+    assert mods["fakeplug"]["sources"] == [
+        {"id": "fakeorb", "label": "Fake orbit", "kind": "orbit", "slow": False},
+        {"id": "faketrack", "label": "Fake track", "kind": "trajectory", "slow": False},
+    ]
+    assert mods["passes"]["works_with"] == ["orbit", "trajectory"]
+    assert mods["maneuvers"]["works_with"] == ["orbit"]  # the default
+
+
+def test_core_sources_and_the_pre_source_convention_agree(fake):
+    client, _ = fake
+    shape = "hp=500&ha=39868&inc=63.4&argp=270&node_lon=65&hours=2&epoch=2026-08-23T00:00:00Z"
+    old = client.get(f"/api/plan?anchor=elements&{shape}").get_json()
+    new = client.get(f"/api/plan?source=preset&{shape}").get_json()
+    assert old == new and new["summary"]["source"] == "preset"
+    site = client.get(f"/api/plan?{QS}").get_json()["summary"]
+    assert site["source"] == "site" and site["kind"] == "orbit"
+
+
+def test_orbit_source_is_propagated_like_a_core_orbit(fake):
+    client, _ = fake
+    res = client.get("/api/plan?source=fakeorb&alt=600&hours=1&dt=60&mode=slowfake").get_json()
+    s = res["summary"]
+    assert s["source"] == "fakeorb" and s["kind"] == "orbit" and s["title"] == "fake orbit"
+    assert round(s["alt_km"]) == 600 and len(res["track"]["t"]) == 61
+
+
+def test_trajectory_source_comes_finished(fake):
+    client, _ = fake
+    res = client.get("/api/plan?source=faketrack&n=21&hours=99&mode=nope").get_json()
+    assert res["summary"] == {"source": "faketrack", "kind": "trajectory", "title": "fake track"}
+    assert len(res["track"]["lat"]) == 21 and "apsides" not in res["track"]
+    # modules that only need a track work on it ...
+    win = client.get("/api/passes?source=faketrack&tgt_lat=5&tgt_lon=0&within_km=50").get_json()
+    assert win["n"] == 1
+    # ... and anything asking it for an orbit gets a reason, not a crash
+    from mission_planner.planning import orbit_from_args
+
+    with pytest.raises(ValueError, match="finished trajectory, not an orbit"):
+        orbit_from_args({"source": "faketrack"})
+
+
+def test_sources_follow_the_switch(fake):
+    client, _ = fake
+    client.post("/api/modules/fakeplug", json={"enabled": False})
+    off = client.get("/api/plan?source=faketrack")
+    assert off.status_code == 400 and "switched off" in off.get_json()["error"]
+    assert client.post("/api/plan_job?source=faketrack").status_code == 400
+    unknown = client.get("/api/plan?source=nope").get_json()["error"]
+    assert "unknown source 'nope'" in unknown and "site|preset" in unknown
+
+
+def test_trajectory_source_runs_as_a_plan_job_without_a_mode(fake):
+    import time
+
+    client, _ = fake
+    job = client.post("/api/plan_job?source=faketrack&mode=nope").get_json()
+    for _ in range(100):
+        res = client.get(f"/api/plan_job/{job['job_id']}").get_json()
+        if res["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert res["status"] == "done" and res["summary"]["kind"] == "trajectory"
