@@ -13,15 +13,60 @@
 * { box-sizing: border-box; }
 body {
   margin:0; font:13px/1.45 system-ui, sans-serif; color:var(--ink);
-  background:var(--bg); height:100vh; display:flex;
+  background:var(--bg); height:100vh; display:flex; flex-direction:column;
 }
+#app { flex:1; display:flex; min-height:0; }
+/* drop-down menu bar (static/ui/menubar.js) */
+#menubar {
+  display:flex; align-items:center; gap:2px; padding:2px 6px;
+  background:var(--panel); border-bottom:1px solid var(--grid);
+}
+.mb-btn { width:auto; border:none; background:transparent; padding:3px 9px; border-radius:4px; }
+.mb-btn:hover, .mb-btn.on { background:var(--grid); }
+.mb-drop {
+  position:fixed; z-index:50; min-width:220px; padding:4px 0; margin-top:2px;
+  background:var(--bg); border:1px solid var(--grid); border-radius:5px;
+  box-shadow:0 4px 14px rgba(0,0,0,.10);
+}
+.mb-item {
+  display:flex; align-items:center; width:100%; border:none; border-radius:0;
+  background:transparent; padding:4px 14px 4px 6px; text-align:left;
+}
+.mb-item:hover:not(:disabled) { background:#e8f0fb; }
+.mb-item:disabled { color:var(--muted); cursor:default; }
+.mb-mark { width:18px; text-align:center; color:var(--blue); flex:none; }
+.mb-label { flex:1; }
+.mb-hint { color:var(--muted); font-size:11px; margin-left:18px; }
+.mb-sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+.mb-head {
+  font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); padding:6px 14px 2px 24px;
+}
+.mb-sep { border-top:1px solid var(--grid); margin:4px 0; }
+/* segmented button row (trajectory source) */
+.seg { display:flex; margin:2px 0 4px; }
+.seg button { flex:1; border-radius:0; padding:4px 6px; }
+.seg button:first-child { border-radius:4px 0 0 4px; }
+.seg button + button { border-left:none; }
+.seg button:last-child { border-radius:0 4px 4px 0; }
+.seg button.on { background:var(--grid); font-weight:600; }
+.mb-drop { max-width:380px; }
+.mb-item { align-items:flex-start; }
+.mb-sub { display:flex; flex-wrap:wrap; gap:3px; margin-top:2px; }
+.mb-badge { font-size:10px; color:var(--muted); border:1px solid var(--grid); border-radius:3px; padding:0 4px; }
+.mb-detail { flex-basis:100%; font-size:11px; color:var(--muted); }
+.mb-detail.err { color:var(--red); }
+.mb-item:disabled .mb-sub { opacity:.8; }
+.mb-note { font-size:11px; color:var(--muted); padding:4px 14px 4px 24px; }
+.mb-flag { display:inline-block; width:6px; height:6px; border-radius:50%; margin-left:4px; vertical-align:2px; }
 #side {
   width:340px; min-width:340px; padding:14px 16px; overflow-y:auto;
   border-right:1px solid var(--grid); background:var(--panel);
 }
 #main { flex:1; display:flex; flex-direction:column; min-width:0; }
 #mapwrap { flex:1; min-height:0; position:relative; }
-svg#map { width:100%; height:100%; display:block; background:var(--bg); cursor:grab; }
+svg#map { width:100%; height:100%; display:block; background:var(--bg); cursor:grab;
+          user-select:none; -webkit-user-select:none; }
 svg#map.dragging { cursor:grabbing; }
 h1 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; margin:0 0 12px; }
 .lbl {
@@ -42,28 +87,11 @@ button.small { width:auto; padding:2px 8px; font-size:11px; }
 details.modbox { border-top:1px solid var(--grid); margin-top:12px; padding-top:4px; }
 details.modbox summary { cursor:pointer; display:list-item; margin:0 0 3px; }
 details.modbox[open] summary { margin-bottom:6px; }
-#pluginbox { border-top:none; margin-top:0; padding-top:0; }
-.plug { display:flex; flex-wrap:wrap; gap:2px 6px; align-items:baseline; margin:5px 0; }
-.plug .badges { flex-basis:100%; margin-left:20px; }
-.plug input { width:auto; }
-.plug .name { flex:1; }
-.plug.off .name { color:var(--muted); }
-.plug .err { flex-basis:100%; color:var(--red); font-size:11px; margin-left:20px; }
-.seg { display:flex; margin:2px 0 8px; }
-.seg button { width:auto; border-radius:0; }
-.seg button:first-child { border-radius:4px 0 0 4px; }
-.seg button + button { border-left:none; }
-.seg button:last-child { border-radius:0 4px 4px 0; }
-.seg button.on { background:var(--grid); font-weight:600; }
-label.chk { display:block; cursor:pointer; }
-label.chk input { width:auto; }
-label.chk .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 2px; vertical-align:-1px; }
-.plug .why { flex-basis:100%; color:var(--muted); font-size:11px; margin-left:20px; }
-.plug.unavail .name { color:var(--muted); }
 .badge { display:inline-block; white-space:nowrap; margin:1px 0; font-size:10px; color:var(--muted); border:1px solid var(--grid); border-radius:3px; padding:0 4px; }
 #status { color:var(--muted); min-height:1.4em; margin-top:8px; }
 #status.err { color:var(--red); font-weight:600; }
 #summary, #elements { border-top:1px solid var(--grid); margin-top:12px; padding-top:6px; }
+#summary:empty { display:none; }
 #summary table, #elements table { width:100%; border-collapse:collapse; }
 #summary td, #elements td { padding:1.5px 0; }
 #summary td:last-child, #elements td:last-child { text-align:right; font-variant-numeric:tabular-nums; }
@@ -107,88 +135,82 @@ label.chk .sw { display:inline-block; width:10px; height:10px; border-radius:2px
 </head>
 <body>
 
+<div id="menubar"></div>
+<div id="app">
 <div id="side">
   <h1>Mission Planner</h1>
-  <details class="modbox" id="pluginbox">
-    <summary class="lbl" id="pluginsum">plugins</summary>
-    <div id="pluginlist"></div>
-    <div class="hint">panels, map layers, routes, modes and data switch live; mcp
-    tools are fixed when the MCP server starts (MP_DISABLE_MODULES).</div>
-  </details>
 
-  <div class="lbl">orbit preset</div>
-  <select id="preset"></select>
-  <div id="preset2row" style="display:none">
-    <div class="lbl">variant</div>
-    <select id="preset2"></select>
-  </div>
+  <!-- Trajectory source: where the trajectory comes from.  Each source shows
+       only its own options; the orbit shape and propagation blocks follow for
+       sources that start from an orbit. -->
+  <div class="lbl">trajectory source</div>
+  <div class="seg" id="srcseg"></div>
 
-  <div id="sitebox">
+  <div id="src_site" class="srcpanel">
     <div class="lbl">launch site</div>
     <select id="site"></select>
     <div class="row" style="margin-top:4px">
       <input id="sitelat" type="number" step="0.1" placeholder="lat">
       <input id="sitelon" type="number" step="0.1" placeholder="lon">
     </div>
-  </div>
-  <div id="nodelonrow" style="display:none">
-    <div class="lbl">node / station longitude &deg;E</div>
-    <input id="nodelon" type="number" step="5" value="0">
-  </div>
-  <div id="ltanrow" style="display:none">
-    <div class="lbl">LTAN — local time of ascending node (h)</div>
-    <input id="ltan" type="number" step="0.5" min="0" max="24" value="10.5">
+    <div class="lbl">leg over site</div>
+    <select id="leg">
+      <option value="ascending">ascending (northeast)</option>
+      <option value="descending">descending (southeast)</option>
+    </select>
   </div>
 
-  <div class="lbl">perigee altitude <span id="altv" style="color:var(--ink)"></span> km</div>
-  <input id="alt" type="range" min="120" max="1000" step="5" value="160">
-  <div class="row" style="margin-top:2px">
-    <input id="peri" type="number" step="10" value="160" title="perigee altitude km">
-    <input id="apo" type="number" step="10" placeholder="apogee km (blank = circular)">
-  </div>
-  <div class="lbl" id="pofslbl">perigee position <span id="pofsv" style="color:var(--ink)">0</span>&deg; downrange of site</div>
-  <input id="pofs" type="range" min="0" max="359" step="1" value="0" disabled>
-  <div class="lbl">inclination <span id="incv" style="color:var(--ink)"></span> deg</div>
-  <input id="inc" type="range" min="0" max="120" step="0.01" value="51.6">
-
-  <div class="lbl">launch epoch (utc)</div>
-  <input id="epoch" type="datetime-local" step="60">
-  <div class="lbl">leg over site</div>
-  <select id="leg">
-    <option value="ascending">ascending (northeast)</option>
-    <option value="descending">descending (southeast)</option>
-  </select>
-
-  <div class="lbl">propagate <span id="hoursv" style="color:var(--ink)"></span> hours</div>
-  <input id="hours" type="range" min="1" max="720" step="1" value="24">
-
-  <div class="lbl">propagation mode</div>
-  <select id="mode">
-    <option value="kepler">kepler + J2 (no drag)</option>
-    <option value="decay">drag decay (ballistic coeff.)</option>
-  </select>
-  <div id="betarow" style="display:none">
-    <div class="lbl">ballistic coefficient β = m/(C<sub>d</sub>A) kg/m²</div>
-    <input id="beta" type="number" step="10" value="300">
+  <div id="src_preset" class="srcpanel">
+    <div class="lbl">orbit</div>
+    <select id="preset"></select>
+    <div id="preset2row" style="display:none">
+      <div class="lbl">variant</div>
+      <select id="preset2"></select>
+    </div>
+    <div id="nodelonrow" style="display:none">
+      <div class="lbl">node / station longitude &deg;E</div>
+      <input id="nodelon" type="number" step="5" value="0">
+    </div>
+    <div id="ltanrow" style="display:none">
+      <div class="lbl">LTAN — local time of ascending node (h)</div>
+      <input id="ltan" type="number" step="0.5" min="0" max="24" value="10.5">
+    </div>
   </div>
 
-  <div style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
+  <div id="orbitform">
+    <div class="lbl">perigee altitude <span id="altv" style="color:var(--ink)"></span> km</div>
+    <input id="alt" type="range" min="120" max="1000" step="5" value="160">
+    <div class="row" style="margin-top:2px">
+      <input id="peri" type="number" step="10" value="160" title="perigee altitude km">
+      <input id="apo" type="number" step="10" placeholder="apogee km (blank = circular)">
+    </div>
+    <div id="pofsrow">
+      <div class="lbl">perigee position <span id="pofsv" style="color:var(--ink)">0</span>&deg; downrange of site</div>
+      <input id="pofs" type="range" min="0" max="359" step="1" value="0">
+    </div>
+    <div class="lbl">inclination <span id="incv" style="color:var(--ink)"></span> deg</div>
+    <input id="inc" type="range" min="0" max="120" step="0.01" value="51.6">
+
+    <div class="lbl" id="epochlbl">launch epoch (utc)</div>
+    <input id="epoch" type="datetime-local" step="60">
+
+    <div class="lbl">propagate <span id="hoursv" style="color:var(--ink)"></span> hours</div>
+    <input id="hours" type="range" min="1" max="720" step="1" value="24">
+
+    <div class="lbl">propagation mode</div>
+    <select id="mode">
+      <option value="kepler">kepler + J2 (no drag)</option>
+      <option value="decay">drag decay (ballistic coeff.)</option>
+    </select>
+    <div id="betarow" style="display:none">
+      <div class="lbl">ballistic coefficient β = m/(C<sub>d</sub>A) kg/m²</div>
+      <input id="beta" type="number" step="10" value="300">
+    </div>
+
+    <div style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
+  </div>
   <div id="status">set parameters, then plan.</div>
 
-  <details class="modbox" id="displaybox" open>
-    <summary class="lbl">display</summary>
-    <div class="seg" id="projseg">
-      <button class="small ghost on" data-proj="map" title="flat map; drag sideways to scroll">map</button>
-      <button class="small ghost" data-proj="globe" title="the map projected on a globe">globe</button>
-      <button class="small ghost" data-proj="orbit" title="the orbit in space around the earth">orbit</button>
-    </div>
-    <label class="chk"><input type="checkbox" id="disp_horizon"> horizon footprint at playback time</label>
-    <label class="chk"><input type="checkbox" id="disp_night" checked> night shading</label>
-    <div id="displayextra"></div>
-    <div id="overlaylist"></div>
-    <div class="hint">green ring = the satellite's visible horizon; anything inside
-    (e.g. a downlink site) can see the vehicle</div>
-  </details>
   <div id="modulebox"></div>
 
   <div id="summary"></div>
@@ -231,6 +253,9 @@ label.chk .sw { display:inline-block; width:10px; height:10px; border-radius:2px
     <span class="clock" id="clock">—</span>
   </div>
 </div>
+</div>
+
+<script src="/static/ui/menubar.js"></script>
 
 <script>
 "use strict";
@@ -283,11 +308,15 @@ function project(lat, lon) {
 // Orbit view.  Track samples are earth-fixed; turning each one east by the
 // earth's rotation between its time and the scrub time puts it in the frame
 // of the earth as drawn (oriented at tCur), which is the inertial orbit -- a
-// closed ellipse, not a ground-track spiral.  Vectors are in earth radii.
+// closed ellipse, not a ground-track spiral.  That's "ECI" in the View menu:
+// the shape is ECI's, the axes are the earth's at tCur (no precession or
+// nutation).  "ECEF" skips the turn: the ground track lifted to altitude.
+// Vectors are in earth radii.
 const OMEGA_E_DEG = 7.2921159e-5 / DEG, RE_KM = 6378.137;
 function orbitVec(lat, lon, alt_km, t_s) {
   const k = 1 + alt_km / RE_KM;
-  return vec(lat, lon + OMEGA_E_DEG * (t_s - tCur)).map(q => q * k);
+  const turn = orbitView.frame === "eci" ? OMEGA_E_DEG * (t_s - tCur) : 0;
+  return vec(lat, lon + turn).map(q => q * k);
 }
 // Hidden only when behind the earth AND inside its disc.
 const occluded = v => dot(v, B.n) < 0 && dot(v, B.e) ** 2 + dot(v, B.u) ** 2 < 1;
@@ -352,8 +381,10 @@ function status(msg, isErr) {
 // ------------------------------------------------------------ state
 let coast = null, sitesList = [], overlayList = [];   // catalog: core + active data packs
 const overlayOff = new Set();   // "pack/id" of overlays the user switched off
-const display = { horizon: false, night: true };   // core display menu
+const display = { horizon: false, night: true };
+const orbitView = { frame: "eci", ground: true };   // orbit view: frame of the lifted path, ground trace   // core layers, switched from the View menu
 let activePreset = null;   // {argp?, node_lon?} when an orbit preset is selected
+let source = "site";       // trajectory source id (see SOURCES)
 let plan = null;          // {summary, track} from /api/plan
 let scene = null;         // agent-pushed Scene
 let win = [0, 1];         // shown span, fraction of track duration
@@ -714,10 +745,11 @@ function redraw() {
     const [i0, i1] = trackWindowIdx();
     const tr = plan.track, pts = [], orbit3d = projMode === "orbit";
     for (let i = i0; i <= i1; i++) pts.push([tr.lat[i], tr.lon[i]]);
-    // In the orbit view the ground track stays on the surface, faint, and
-    // the orbit itself is drawn in space.
-    polyline(pts, { stroke:C.blue, "stroke-width": orbit3d ? .8 : 1.1,
-                    opacity: orbit3d ? .25 : .45 });
+    // In the orbit view the ground track stays on the surface, faint (and
+    // optional), and the orbit itself is drawn in space.
+    if (!orbit3d || orbitView.ground)
+      polyline(pts, { stroke:C.blue, "stroke-width": orbit3d ? .8 : 1.1,
+                      opacity: orbit3d ? .25 : .45 });
     // Emphasize the orbit around the playback position: half a rev ahead
     // and behind the satellite dot, clipped to the display window.
     const halfP = plan.summary.period_s / 2;
@@ -741,6 +773,10 @@ function redraw() {
     if (plan.summary.site_lat != null)
       marker(plan.summary.site_lat, plan.summary.site_lon, C.muted, "site", "",
              { key:"site", title: plan.summary.site });
+    // Apsis markers on screen, so the satellite's label can dodge theirs.
+    const apsisAt = (tr.apsides || []).map(ap => [ap,
+      orbit3d ? spacePoint(orbitVec(ap.lat_deg, ap.lon_deg, ap.alt_km, ap.t_s))
+              : project(ap.lat_deg, ap.lon_deg)]);
     const k = idxAtTime(tCur);
     if (k >= i0 && k <= i1) {
       let ps = project(tr.lat[k], tr.lon[k]);
@@ -755,14 +791,16 @@ function redraw() {
                gamma_deg: fpaDeg(tr, k),
                rows: [["utc", fmtUTC(Date.parse(tr.epoch_utc)
                                      + tr.t[k] * 1000).slice(5)]] }, ps);
-      if (ps.vis)
-        el("text", { x:ps.x+8, y:ps.y-6, fill:C.blue, "font-size":11 })
+      if (ps.vis) {
+        // Near an apsis marker its label sits to the right, so go left.
+        const left = apsisAt.some(([, a]) => a.vis && Math.hypot(a.x - ps.x, a.y - ps.y) < 30);
+        el("text", { x: left ? ps.x-8 : ps.x+8, y:ps.y-6, fill:C.blue, "font-size":11,
+                     "text-anchor": left ? "end" : "start" })
           .textContent = tr.alt_km[k].toFixed(0) + " km";
+      }
     }
     // perigee/apogee markers on the first pass (elliptic only)
-    if (tr.apsides) for (const ap of tr.apsides) {
-      const at = orbit3d ? spacePoint(orbitVec(ap.lat_deg, ap.lon_deg, ap.alt_km, ap.t_s))
-                         : project(ap.lat_deg, ap.lon_deg);
+    for (const [ap, at] of apsisAt) {
       const { x, y, vis } = at;
       if (!vis) continue;
       // gamma is exactly 0 at an apsis -- the radial rate vanishes there.
@@ -926,6 +964,9 @@ function tick(now) {
   const normLon = lon => ((lon + 540) % 360 + 360) % 360 - 180;
   const clampY = y => Math.max(0, Math.min(H - view.h, y));
   svg.addEventListener("mousedown", ev => {
+    // A drag is a pan/rotate, never a text selection (labels, or the side panel
+    // if the pointer strays onto it).
+    ev.preventDefault();
     down = { ev, lonC, latC, y: view.y, scale: svg.getScreenCTM().a };
     moved = false; svg.classList.add("dragging");
   });
@@ -976,14 +1017,13 @@ function tick(now) {
     redraw();
   }, { passive:false });
   svg.addEventListener("dblclick", () => { view = { x:0, y:0, w:W, h:H }; redraw(); });
-  // map / globe toggle (display menu); the view resets, the longitude carries over
-  document.querySelectorAll("[data-proj]").forEach(b => b.onclick = () => {
-    projMode = b.dataset.proj;
-    document.querySelectorAll("[data-proj]").forEach(x => x.classList.toggle("on", x === b));
-    view = { x:0, y:0, w:W, h:H };
-    redraw();
-  });
 })();
+// Projection switch (View menu); the view resets, the longitude carries over.
+function setProj(mode) {
+  projMode = mode;
+  view = { x:0, y:0, w:360 * S, h:180 * S };
+  redraw();
+}
 
 // ------------------------------------------------------------ planning
 function args() {
@@ -1074,19 +1114,15 @@ function applyPlan(res) {
   plan = res; tCur = 0; pinOpen = null;
   const s = res.summary;
   const row = r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`;
-  // Site info collapses by default for element-anchored (preset) orbits,
-  // where the launch site doesn't apply.
-  $("summary").innerHTML =
-    `<details class="modbox" style="border-top:none;margin-top:0;padding-top:0"
-              ${activePreset ? "" : "open"}>
-       <summary class="lbl">launch site info</summary><table>` + [
-      ["site", s.site],
-      ["launch azimuth", s.launch_azimuth_deg == null ? "—" : s.launch_azimuth_deg + "°"],
-    ].map(row).join("") + "</table></details><table>" + [
-      ["period", (s.period_s/60).toFixed(1) + " min"],
-      ["revs / day", s.revs_per_day],
-      ["raan drift", s.raan_drift_deg_per_day + "°/day"],
-    ].map(row).join("") + "</table>";
+  // The launch site, when there is one: element-anchored (preset) orbits have none.
+  $("summary").innerHTML = s.site_lat == null ? "" :
+    `<details class="modbox" style="border-top:none;margin-top:0;padding-top:0" open>
+       <summary class="lbl">launch site</summary><table>` + [
+      ["site", escHtml(s.site)],
+      ["lat", s.site_lat.toFixed(3) + "°"],
+      ["lon", s.site_lon.toFixed(3) + "°"],
+      ["launch azimuth", s.launch_azimuth_deg + "°"],
+    ].map(row).join("") + "</table></details>";
   drawDecay(res.track);
   const shape = s.e > 1e-4
     ? `${s.perigee_km.toFixed(0)}×${s.apogee_km.toFixed(0)} km`
@@ -1095,11 +1131,15 @@ function applyPlan(res) {
   status(`planned ${s.site} · ${shape} / ${s.inc_deg}° · `
     + `${s.revs_per_day} rev/day` + (res.track.entry ? " · DECAYS — see entry" : "")
     + ` (${stamp})`);
-  $("elements").innerHTML = "<div class='lbl'>orbital elements @ epoch</div><table>" + [
+  $("elements").innerHTML = "<div class='lbl'>orbit</div><table>" + [
+    ["period", (s.period_s/60).toFixed(1) + " min"],
+    ["revs / day", s.revs_per_day],
+    ["raan drift", s.raan_drift_deg_per_day + "°/day"],
+  ].map(row).join("") + "</table><div class='lbl'>orbital elements @ epoch</div><table>" + [
     ["a", s.a_km.toFixed(1) + " km"], ["e", s.e.toFixed(5)],
     ["i", s.inc_deg + "°"], ["&Omega; (RAAN)", s.raan_deg + "°"],
     ["&omega; (arg perigee)", s.argp_deg + "°"], ["&nu;&#8320;", s.nu0_deg + "°"],
-  ].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") + "</table>";
+  ].map(row).join("") + "</table>";
   setWindow(0, 1);
   MP.live(MP._onPlan).forEach(cb => cb(plan));
 }
@@ -1193,9 +1233,8 @@ $("alt").oninput = () => { $("peri").value = $("alt").value; periSync(); };
 $("peri").oninput = () => { $("alt").value = $("peri").value; periSync(); };
 function periSync() {
   $("altv").textContent = $("peri").value;
-  const ell = +$("apo").value > +$("peri").value;
-  $("pofs").disabled = !ell || !!activePreset;
-  $("pofslbl").style.opacity = $("pofs").disabled ? 0.45 : 1;
+  // Perigee position only means something for an elliptic orbit off a site.
+  $("pofsrow").hidden = !(source === "site" && +$("apo").value > +$("peri").value);
   ssoSync();
 }
 $("apo").oninput = periSync;
@@ -1212,8 +1251,9 @@ function buildPresets(list) {
                         sso: !!p.sun_synchronous,
                         sub: p.sun_synchronous ? () => ssoRepeatOptions() : undefined };
   const cur = $("preset").value;
-  $("preset").innerHTML = "<option value=''>custom (launch site)</option>"
+  $("preset").innerHTML = "<option value='' disabled hidden>choose an orbit…</option>"
     + list.map(p => `<option>${escHtml(p.name)}</option>`).join("");
+  if (!cur) $("preset").value = "";
   if (cur && PRESETS[cur]) $("preset").value = cur;
   else if (cur) { $("preset").value = ""; $("preset").onchange(); }
 }
@@ -1260,12 +1300,9 @@ $("preset").onchange = () => {
   $("preset2row").style.display = subOptions.length ? "block" : "none";
   $("preset2").innerHTML = "<option value=''>custom altitude</option>"
     + subOptions.map((o, i) => `<option value="${i}">${o.label}</option>`).join("");
-  const siteMode = !activePreset;
-  $("sitebox").style.opacity = siteMode ? 1 : 0.4;
-  $("site").disabled = $("sitelat").disabled = $("sitelon").disabled
-    = $("leg").disabled = !siteMode;
-  $("nodelonrow").style.display = siteMode ? "none" : "block";
+  $("nodelonrow").style.display = activePreset ? "block" : "none";
   $("ltanrow").style.display = activePreset && activePreset.sso ? "block" : "none";
+  showSource();
   if (activePreset) {
     $("peri").value = activePreset.hp; $("alt").value = activePreset.hp;
     $("apo").value = activePreset.ha > activePreset.hp ? activePreset.ha : "";
@@ -1273,8 +1310,6 @@ $("preset").onchange = () => {
     $("nodelon").value = activePreset.node_lon ?? 0;
     status(`preset ${name} — adjust if needed, then plan.`);
     ssoSync();
-  } else {
-    status("custom orbit over a launch site.");
   }
   periSync();
 };
@@ -1326,24 +1361,46 @@ $("site").onchange = () => {
 };
 $("sitelat").oninput = $("sitelon").oninput = () => { $("site").value = "custom"; };
 
-// ------------------------------------------------------------ display menu + catalog
-$("disp_horizon").onchange = () => { display.horizon = $("disp_horizon").checked; redraw(); };
-$("disp_night").onchange = () => { display.night = $("disp_night").checked; redraw(); };
-
-function buildOverlayList() {
-  $("overlaylist").innerHTML = overlayList.length
-    ? "<div class='lbl'>map overlays</div>" + overlayList.map(ov => {
-        const key = escHtml(ov.pack + "/" + ov.id);
-        return `<label class="chk" title="${escHtml(ov.pack)}">
-          <input type="checkbox" data-ov="${key}" ${overlayOff.has(ov.pack + "/" + ov.id) ? "" : "checked"}>
-          <span class="sw" style="background:${ov.style.color || C.red}"></span>${escHtml(ov.name)}
-        </label>`; }).join("")
-    : "";
-  document.querySelectorAll("[data-ov]").forEach(cb => cb.onchange = () => {
-    (cb.checked ? overlayOff.delete(cb.dataset.ov) : overlayOff.add(cb.dataset.ov));
-    redraw();
-  });
+// ------------------------------------------------------------ trajectory source
+// Where the trajectory comes from.  Each source has its own panel of options;
+// the orbit form (shape, epoch, propagation, plan) follows once the source is
+// ready -- a preset source isn't until an orbit is picked.  Each source keeps
+// its own shape values, so switching back and forth doesn't cross them over.
+const SOURCES = [
+  { id:"site", label:"Launch site", epochLabel:"launch epoch (utc)", ready: () => true },
+  { id:"preset", label:"Orbit preset", epochLabel:"epoch (utc)", ready: () => !!activePreset },
+];
+const SHAPE = ["peri", "apo", "inc", "pofs"];
+const shapeMemo = {};
+function setSource(id) {
+  if (id === source) return;
+  shapeMemo[source] = Object.fromEntries(SHAPE.map(k => [k, $(k).value]));
+  source = id;
+  const memo = shapeMemo[id];
+  if (memo) {
+    for (const k of SHAPE) $(k).value = memo[k];
+    $("alt").value = memo.peri; setInc(memo.inc); $("pofsv").textContent = memo.pofs;
+  }
+  activePreset = id === "preset" && $("preset").value ? PRESETS[$("preset").value] : null;
+  showSource();
+  periSync();
+  if (id === "site") $("site").onchange();
+  status(id === "preset" && !activePreset ? "choose an orbit." : "set parameters, then plan.");
 }
+function showSource() {
+  const src = SOURCES.find(x => x.id === source);
+  for (const x of SOURCES) $("src_" + x.id).hidden = x.id !== source;
+  document.querySelectorAll("#srcseg button").forEach(b => b.classList.toggle("on", b.dataset.src === source));
+  $("orbitform").hidden = !src.ready();
+  $("epochlbl").textContent = src.epochLabel;
+}
+$("srcseg").innerHTML = SOURCES.map(x =>
+  `<button class="small ghost" data-src="${x.id}">${x.label}</button>`).join("");
+document.querySelectorAll("#srcseg button").forEach(b => b.onclick = () => setSource(b.dataset.src));
+showSource();
+
+// ------------------------------------------------------------ catalog
+
 function buildSites() {
   const cur = $("site").value;
   $("site").innerHTML = sitesList.map(s => `<option>${escHtml(s.name)}</option>`).join("")
@@ -1358,8 +1415,68 @@ async function refreshCatalogs() {
     [api("/api/sites"), api("/api/presets"), api("/api/overlays")]);
   buildSites();
   buildPresets(presets);
-  buildOverlayList();
 }
+
+// ------------------------------------------------------------ menu bar
+// The core's File and View menus; modules add theirs through ctx.addMenuItem.
+const menubar = new Menubar($("menubar"));
+
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 0);
+}
+const planStamp = () => plan.track.epoch_utc.slice(0, 16).replace(/[-:]/g, "");
+menubar.add("File", { type:"action", label:"Export track (CSV)", enabled: () => !!plan,
+  run() {
+    const tr = plan.track, t0 = Date.parse(tr.epoch_utc);
+    const rows = tr.t.map((t, i) => [new Date(t0 + t * 1000).toISOString(), t,
+                                     tr.lat[i], tr.lon[i], tr.alt_km[i]].join(","));
+    download(`track_${planStamp()}.csv`,
+             "utc,t_s,lat_deg,lon_deg,alt_km\n" + rows.join("\n") + "\n", "text/csv");
+  } });
+menubar.add("File", { type:"action", label:"Export plan (JSON)", enabled: () => !!plan,
+  run: () => download(`plan_${planStamp()}.json`, JSON.stringify(plan, null, 1),
+                      "application/json") });
+
+menubar.add("View", { type:"head", label:"projection" });
+for (const [mode, label, title] of [["map", "Map", "flat map; drag sideways to scroll"],
+                                    ["globe", "Globe", "the map projected on a globe"],
+                                    ["orbit", "Orbit", "the orbit in space around the earth"]])
+  menubar.add("View", { type:"radio", label, title, get: () => projMode === mode,
+                        set: () => setProj(mode) });
+menubar.add("View", { type:"head", label:"orbit view", visible: () => projMode === "orbit" });
+const setOrbitView = (key, v) => { orbitView[key] = v; redraw(); };
+menubar.add("View", { type:"radio", label:"ECI frame (inertial)", visible: () => projMode === "orbit",
+  title:"the orbit in space: a closed path, drawn with the earth's axes at playback time "
+        + "(no precession/nutation)",
+  get: () => orbitView.frame === "eci", set: () => setOrbitView("frame", "eci") });
+menubar.add("View", { type:"radio", label:"ECEF frame (earth-fixed)", visible: () => projMode === "orbit",
+  title:"the path as it moves over the turning earth: the ground trace lifted to altitude",
+  get: () => orbitView.frame === "ecef", set: () => setOrbitView("frame", "ecef") });
+menubar.add("View", { type:"check", label:"Ground trace", visible: () => projMode === "orbit",
+  get: () => orbitView.ground, set: v => setOrbitView("ground", v) });
+menubar.add("View", { type:"head", label:"layers" });
+const setDisplay = (key, on) => { display[key] = on; redraw(); };
+const setOverlay = (key, on) => { on ? overlayOff.delete(key) : overlayOff.add(key); redraw(); };
+menubar.add("View", { type:"check", label:"Horizon footprint at playback time",
+                      title:"green ring = the satellite's visible horizon; anything inside "
+                            + "(e.g. a downlink site) can see the vehicle",
+                      get: () => display.horizon, set: v => setDisplay("horizon", v) });
+menubar.add("View", { type:"check", label:"Night shading",
+                      get: () => display.night, set: v => setDisplay("night", v) });
+// Modules' display toggles (ctx.addDisplayToggle) land here, under the core layers.
+const viewModuleRows = [];
+menubar.add("View", { type:"group", items: () => viewModuleRows.filter(i => i.visible()) });
+menubar.add("View", { type:"group", items: () => overlayList.length
+  ? [{ type:"head", label:"map overlays" }].concat(overlayList.map(ov => {
+      const key = ov.pack + "/" + ov.id;
+      return { type:"check", label: ov.name, title: ov.pack, swatch: ov.style.color || C.red,
+               get: () => !overlayOff.has(key), set: v => setOverlay(key, v) };
+    }))
+  : [] });
 
 // ------------------------------------------------------------ capability modules
 // Built-ins and plugins (see mission_planner/plugins.py) ship a JS asset that
@@ -1382,7 +1499,6 @@ const MP = {
     const name = document.currentScript?.dataset.module ?? mod.title;
     const rec = (MP.mods[name] ??= { name, title: mod.title, status: "loaded",
                                       enabled: true, active: true });
-    rec.displayRows = [];
     // Collapsible box, closed by default unless the module says open.
     const box = document.createElement("details");
     box.className = "modbox";
@@ -1416,18 +1532,22 @@ const MP = {
         // fn(lat, lon) for a click on the map; a module that paints only while
         // its panel is open should gate on isOpen() here too.
         onClick: hook(MP._clicks, true),
-        // A checkbox row in the core display menu; returns the <input>.
+        // A check item in the View menu's layers section.  Returns a detached
+        // checkbox <input> holding the state, so the module can read or set it.
         addDisplayToggle: (label, checked, cb) => {
-          const row = document.createElement("label");
-          row.className = "chk";
-          row.hidden = !rec.active;
-          row.innerHTML = `<input type="checkbox" ${checked ? "checked" : ""}> ${escHtml(label)}`;
-          const input = row.querySelector("input");
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.checked = !!checked;
           input.onchange = () => cb(input.checked);
-          $("displayextra").appendChild(row);
-          rec.displayRows.push(row);
+          viewModuleRows.push({ type:"check", label, visible: () => MP.on(name),
+                                get: () => input.checked,
+                                set: v => { input.checked = v; input.onchange(); } });
           return input;
         },
+        // An item in a menu-bar menu (created if new); see static/ui/menubar.js
+        // for the item types.  Hidden while the module is inactive.
+        addMenuItem: (menu, item) => menubar.add(menu, Object.assign({}, item, {
+          visible: () => MP.on(name) && (!item.visible || item.visible()) })),
         seek: ts => seekTo(ts),
       });
     } catch (e) {
@@ -1443,13 +1563,13 @@ const MP = {
     for (const m of list) {
       const rec = Object.assign(MP.mods[m.name] ??= {}, m);
       if (rec.box) rec.box.hidden = !rec.active;
-      (rec.displayRows || []).forEach(r => r.hidden = !rec.active);
       if (rec.catalog && was[m.name] !== undefined && was[m.name] !== rec.active)
         catalogChanged = true;
     }
     if (catalogChanged) await refreshCatalogs();
     buildModeSelect();
     renderPlugins();
+    menubar.refresh();
     // Catch newly active modules up on the plan they missed.
     if (plan)
       for (const m of list)
@@ -1480,40 +1600,41 @@ const MP = {
 const escHtml = s => String(s).replace(/[&<>"]/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
+// The Plugins menu (built-ins aren't listed: they're always on).  The rows are
+// rebuilt every time it opens; this only refreshes an open menu and the red
+// dot that flags a plugin that failed to load.
 function renderPlugins() {
-  const all = Object.values(MP.mods).filter(m => !m.builtin);
-  const ok = all.filter(m => m.status === "loaded");
-  const nFailed = all.filter(m => m.status === "failed").length;
-  const nUnavail = all.filter(m => m.status === "unavailable").length;
-  $("pluginsum").innerHTML = `plugins · ${ok.filter(m => m.active).length}/${ok.length} active`
-    + (nUnavail ? ` · ${nUnavail} unavailable` : "")
-    + (nFailed ? ` · <span style="color:var(--red)">${nFailed} failed</span>` : "");
-  $("pluginlist").innerHTML = all.length ? all.map(m => {
-    const loaded = m.status === "loaded";
-    const badges = [
-      m.js_url && "panel", m.routes && "routes", m.map && "map",
-      ...(m.modes || []).map(x => "mode " + x.mode), m.catalog && "data",
-      m.mcp_tools?.length && `mcp ×${m.mcp_tools.length}`,
-      ...(m.requires || []).map(r => "needs " + r),
-    ].filter(Boolean).map(b => `<span class="badge">${escHtml(b)}</span>`).join(" ");
-    let note = "";
-    if (m.status === "failed") note = `<span class="err">failed: ${escHtml(m.error)}</span>`;
-    else if (m.status === "unavailable") note = `<span class="why">unavailable: ${escHtml(m.error)}</span>`;
-    else if (m.jsError) note = `<span class="err">js error: ${escHtml(m.jsError)}</span>`;
-    else if (m.enabled && !m.active && m.waiting_on)
-      note = `<span class="why">waiting on ${escHtml(m.waiting_on)}</span>`;
-    const cls = ["plug", m.status === "failed" ? "failed" : "",
-                 m.status === "unavailable" ? "unavail" : "", m.active ? "" : "off"].join(" ");
-    return `<label class="${cls}" title="${escHtml(m.description || m.name)}">
-      <input type="checkbox" data-plug="${escHtml(m.name)}"
-        ${m.enabled && loaded ? "checked" : ""} ${loaded ? "" : "disabled"}>
-      <span class="name">${escHtml(m.title)}</span>
-      <span class="badges">${badges}</span> ${note}
-    </label>`;
-  }).join("") : "<div class='hint'>no plugins installed</div>";
-  document.querySelectorAll("[data-plug]").forEach(cb =>
-    cb.onchange = () => MP.toggle(cb.dataset.plug, cb.checked));
+  const bad = Object.values(MP.mods).some(m => !m.builtin && (m.status === "failed" || m.jsError));
+  menubar.flag("Plugins", bad && C.red);
+  menubar.refresh();
 }
+function pluginItems() {
+  const all = Object.values(MP.mods).filter(m => !m.builtin);
+  if (!all.length) return [{ type:"action", label:"No plugins installed", enabled: () => false }];
+  const ok = all.filter(m => m.status === "loaded");
+  return [{ type:"head", label: `${ok.filter(m => m.active).length}/${ok.length} active` }]
+    .concat(all.map(m => {
+      const loaded = m.status === "loaded";
+      let detail = "", err = false;
+      if (m.status === "failed") { detail = "failed: " + m.error; err = true; }
+      else if (m.status === "unavailable") detail = "unavailable: " + m.error;
+      else if (m.jsError) { detail = "js error: " + m.jsError; err = true; }
+      else if (m.enabled && !m.active && m.waiting_on) detail = "waiting on " + m.waiting_on;
+      return {
+        type:"check", label: m.title, title: m.description || m.name,
+        get: () => m.enabled && loaded, set: v => MP.toggle(m.name, v),
+        enabled: () => loaded, detail, detailErr: err,
+        badges: [m.js_url && "panel", m.routes && "routes", m.map && "map",
+                 ...(m.modes || []).map(x => "mode " + x.mode), m.catalog && "data",
+                 m.mcp_tools?.length && `mcp \u00d7${m.mcp_tools.length}`,
+                 ...(m.requires || []).map(r => "needs " + r)].filter(Boolean),
+      };
+    }))
+    .concat([{ type:"sep" }, { type:"note", label: "Panels, map layers, routes, modes and "
+      + "data switch live; MCP tools are fixed when the MCP server starts "
+      + "(MP_DISABLE_MODULES)." }]);
+}
+menubar.add("Plugins", { type:"group", items: pluginItems });
 
 async function loadModules() {
   const list = await api("/api/modules");
@@ -1526,7 +1647,8 @@ async function loadModules() {
     document.body.appendChild(s);
   }
   // A broken plugin shouldn't be something you have to go looking for.
-  if (list.some(m => !m.builtin && m.status === "failed")) $("pluginbox").open = true;
+  const nFailed = list.filter(m => !m.builtin && m.status === "failed").length;
+  if (nFailed) status(`${nFailed} plugin(s) failed to load — see the Plugins menu.`, true);
   buildModeSelect();
   renderPlugins();
 }

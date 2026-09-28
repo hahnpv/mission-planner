@@ -31,13 +31,13 @@ API; the core must never import from it.
   `mission_planner.plugins` entry-point group.
 - New core capability → a built-in module; anything private or optional → a plugin. Don't grow
   `server.py`, `mcp_server.py` or `static/index.html` with feature code — core gets generic hooks
-  (propagation modes, catalog packs, display-menu rows, map layers). Reusable math belongs in the
+  (propagation modes, catalog packs, View-menu toggles, map layers). Reusable math belongs in the
   core library (e.g. `GroundTrack.passes()`), with the module as the UI/REST/MCP skin over it.
 - Plugins import only the public core surface: `planning` (request args → orbit/track/payload),
   `jobs` (background work), `orbit.wrap_pi`, constants, groundtrack, timebase. Keep those stable;
   treat `_`-prefixed names as private.
 - A plugin that fails to import or whose requirement is missing never raises — it shows in the
-  UI's plugins box with the reason. JS hooks must go through `ctx.*` (never straight onto `MP._*`)
+  UI's Plugins menu with the reason. JS hooks must go through `ctx.*` (never straight onto `MP._*`)
   so they go inert with their plugin. Map-drawing modules gate on `ctx.isOpen()`; `marker()` keys
   must be stable across redraws.
 - `server.create_app()` builds the app over `plugins.registry()`; tests swap in a fake registry
@@ -48,7 +48,7 @@ API; the core must never import from it.
 ## Domain gotchas
 
 - "Passes" = ground-track subpoint proximity (`within_km`), **not** line of sight; that's the
-  horizon footprint in the display menu.
+  horizon footprint in the View menu.
 - Naive datetimes are treated as UTC (`timebase.as_utc`).
 - `atmosphere_1976_1000km.py` is a vendored copy kept in sync by a test in the plugins repo.
 
