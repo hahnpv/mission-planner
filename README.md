@@ -46,8 +46,11 @@ python -m mission_planner.server       # -> http://127.0.0.1:3030
 Launch-site / preset / altitude / inclination / epoch controls, propagation
 mode with a β input and altitude-decay sparkline, a pan/zoom map, a time
 scrubber with play/pause, and a **display-window** control (1 rev / 90 min /
-24 h / all, or drag the span handles).  The **display** menu toggles the
-horizon footprint at the playback position, day/night shading, and each map
+24 h / all, or drag the span handles).  The **display** menu switches between
+a flat **map** (drag sideways to scroll endlessly), a **globe** (the map
+projected on a sphere; drag to rotate) and an **orbit** view (the orbit drawn
+in space around the earth, scaled to fit — most telling for high orbits), and
+toggles the horizon footprint at the playback position, day/night shading, and each map
 overlay.  Built in: **target passes** (click the map for overflight windows;
 *subpoint proximity*, not line of sight — the horizon footprint answers that)
 and **maneuvers** (Hohmann, plane change, phasing, deorbit-to-interface

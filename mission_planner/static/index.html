@@ -39,7 +39,6 @@ button { cursor:pointer; }
 button.primary { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:600; }
 button.ghost { background:transparent; }
 button.small { width:auto; padding:2px 8px; font-size:11px; }
-button.cbtn.on { background:var(--grid); font-weight:600; }
 details.modbox { border-top:1px solid var(--grid); margin-top:12px; padding-top:4px; }
 details.modbox summary { cursor:pointer; display:list-item; margin:0 0 3px; }
 details.modbox[open] summary { margin-bottom:6px; }
@@ -50,6 +49,12 @@ details.modbox[open] summary { margin-bottom:6px; }
 .plug .name { flex:1; }
 .plug.off .name { color:var(--muted); }
 .plug .err { flex-basis:100%; color:var(--red); font-size:11px; margin-left:20px; }
+.seg { display:flex; margin:2px 0 8px; }
+.seg button { width:auto; border-radius:0; }
+.seg button:first-child { border-radius:4px 0 0 4px; }
+.seg button + button { border-left:none; }
+.seg button:last-child { border-radius:0 4px 4px 0; }
+.seg button.on { background:var(--grid); font-weight:600; }
 label.chk { display:block; cursor:pointer; }
 label.chk input { width:auto; }
 label.chk .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 2px; vertical-align:-1px; }
@@ -172,6 +177,11 @@ label.chk .sw { display:inline-block; width:10px; height:10px; border-radius:2px
 
   <details class="modbox" id="displaybox" open>
     <summary class="lbl">display</summary>
+    <div class="seg" id="projseg">
+      <button class="small ghost on" data-proj="map" title="flat map; drag sideways to scroll">map</button>
+      <button class="small ghost" data-proj="globe" title="the map projected on a globe">globe</button>
+      <button class="small ghost" data-proj="orbit" title="the orbit in space around the earth">orbit</button>
+    </div>
     <label class="chk"><input type="checkbox" id="disp_horizon"> horizon footprint at playback time</label>
     <label class="chk"><input type="checkbox" id="disp_night" checked> night shading</label>
     <div id="displayextra"></div>
@@ -197,12 +207,7 @@ label.chk .sw { display:inline-block; width:10px; height:10px; border-radius:2px
     <div class="legend" id="legend" style="display:none"></div>
   </div>
   <div id="winrow">
-    <span class="lbl">center</span>
-    <button class="small ghost cbtn on" data-c="0">0&deg;</button>
-    <button class="small ghost cbtn" data-c="90">90E</button>
-    <button class="small ghost cbtn" data-c="180">180&deg;</button>
-    <button class="small ghost cbtn" data-c="-90">90W</button>
-    <span class="lbl" style="margin-left:8px">show</span>
+    <span class="lbl">show</span>
     <button class="small ghost" data-win="rev">1 rev</button>
     <button class="small ghost" data-win="5400">90 min</button>
     <button class="small ghost" data-win="86400">24 h</button>
@@ -234,15 +239,110 @@ const NS = "http://www.w3.org/2000/svg";
 const C = { blue:"#2a78d6", orange:"#eb6834", green:"#1baf7a", red:"#d03b3b",
             muted:"#898781", grid:"#e1e0d9" };
 const S = 3;                       // px per degree, base projection
-let lonC = 0;                      // map center longitude (recenter control)
+let lonC = 0;                      // map center longitude; horizontal drag rotates it
 function wrapL(lon) {              // lon relative to center, [-180, 180)
   let d = (lon - lonC) % 360;
   if (d < -180) d += 360;
   if (d >= 180) d -= 360;
   return d;
 }
-const X = lon => (wrapL(lon) + 180) * S;
+const X = lon => (wrapL(lon) + 180) * S;   // map view only
 const Y = lat => (90 - lat) * S;
+
+// Three views of the same drawing: "map" (equirectangular strip around lonC),
+// "globe" (orthographic, centred on latC/lonC) and "orbit" (the globe shrunk
+// to fit, with the orbit drawn in space around it).  Everything that places
+// a point goes through project(), and polyline/polygon/marker clip to the
+// visible hemisphere on the globe, so every layer -- core, built-ins,
+// plugins, agent scenes -- draws in both views unchanged.
+let projMode = "map";
+let latC = 20;                     // globe centre latitude; vertical drag tilts it
+const GLOBE = { cx: 540, cy: 270, R: 255 };   // in the same 1080x540 view box
+let GR = GLOBE.R;                  // earth radius on screen: GLOBE.R, or smaller in orbit view
+const DEG = Math.PI / 180;
+let B = null;                      // globe basis: n (centre), e (east), u (up)
+function globeBasis() {
+  const la = latC * DEG, lo = lonC * DEG;
+  B = { n: [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)],
+        e: [-Math.sin(lo), Math.cos(lo), 0],
+        u: [-Math.sin(la) * Math.cos(lo), -Math.sin(la) * Math.sin(lo), Math.cos(la)] };
+}
+globeBasis();
+const vec = (lat, lon) => {
+  const la = lat * DEG, lo = lon * DEG;
+  return [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+};
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const onScreen = v => [GLOBE.cx + GR * dot(v, B.e), GLOBE.cy - GR * dot(v, B.u)];
+// {x, y, vis}: screen position and whether the point faces the viewer.
+function project(lat, lon) {
+  if (projMode === "map") return { x: X(lon), y: Y(lat), vis: true };
+  const v = vec(lat, lon), [x, y] = onScreen(v);
+  return { x, y, vis: dot(v, B.n) >= 0 };
+}
+// Orbit view.  Track samples are earth-fixed; turning each one east by the
+// earth's rotation between its time and the scrub time puts it in the frame
+// of the earth as drawn (oriented at tCur), which is the inertial orbit -- a
+// closed ellipse, not a ground-track spiral.  Vectors are in earth radii.
+const OMEGA_E_DEG = 7.2921159e-5 / DEG, RE_KM = 6378.137;
+function orbitVec(lat, lon, alt_km, t_s) {
+  const k = 1 + alt_km / RE_KM;
+  return vec(lat, lon + OMEGA_E_DEG * (t_s - tCur)).map(q => q * k);
+}
+// Hidden only when behind the earth AND inside its disc.
+const occluded = v => dot(v, B.n) < 0 && dot(v, B.e) ** 2 + dot(v, B.u) ** 2 < 1;
+function spacePoint(v) { const [x, y] = onScreen(v); return { x, y, vis: !occluded(v) }; }
+function spaceLine(vs, attrs, parent) {
+  let run = [];
+  const flush = () => {
+    if (run.length > 1)
+      el("polyline", { ...attrs, fill:"none",
+        points: run.map(v => onScreen(v).map(q => q.toFixed(1)).join(",")).join(" ") }, parent);
+    run = [];
+  };
+  for (const v of vs) { if (occluded(v)) flush(); else run.push(v); }
+  flush();
+}
+// Earth radius on screen for the orbit view: the track's highest point fits.
+function orbitRadius() {
+  let hi = 0;
+  if (plan) for (const a of plan.track.alt_km) if (a > hi) hi = a;
+  return GLOBE.R / ((1 + Math.max(hi, 600) / RE_KM) * 1.04);
+}
+
+// Screen point -> {lat, lon}, or null off the globe / map.
+function unproject(x, y) {
+  if (projMode === "map") {
+    const lat = 90 - y / S;
+    if (lat < -90 || lat > 90 || x < 0 || x > 360 * S) return null;
+    return { lat, lon: ((x / S - 180 + lonC + 540) % 360 + 360) % 360 - 180 };
+  }
+  const a = (x - GLOBE.cx) / GR, b = (GLOBE.cy - y) / GR;
+  const w2 = 1 - a * a - b * b;
+  if (w2 < 0) return null;
+  const w = Math.sqrt(w2), v = [0, 1, 2].map(i => a * B.e[i] + b * B.u[i] + w * B.n[i]);
+  return { lat: Math.asin(v[2]) / DEG, lon: Math.atan2(v[1], v[0]) / DEG };
+}
+// Where the chord a->b crosses the limb plane, pushed back onto the sphere.
+function limbPoint(a, b) {
+  const t = a.c / (a.c - b.c);
+  const p = [0, 1, 2].map(i => a.v[i] + t * (b.v[i] - a.v[i]));
+  const m = Math.hypot(...p);
+  return p.map(q => q / m);
+}
+// Points along the limb from p to q; the short way unless `inside` says the
+// short arc's midpoint is outside the region being closed.
+function limbArc(p, q, inside) {
+  const ang = v => Math.atan2(dot(v, B.u), dot(v, B.e));
+  const t0 = ang(p);
+  let d = ang(q) - t0;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  const at = t => [0, 1, 2].map(i => B.e[i] * Math.cos(t) + B.u[i] * Math.sin(t));
+  if (inside && !inside(at(t0 + d / 2))) d -= Math.sign(d || 1) * 2 * Math.PI;
+  const n = Math.ceil(Math.abs(d) / (3 * DEG)), out = [];
+  for (let k = 1; k < n; k++) out.push(at(t0 + d * k / n));
+  return out;
+}
 const api = async p => { const r = await fetch(p); return r.json(); };
 function status(msg, isErr) {
   $("status").textContent = msg;
@@ -270,8 +370,10 @@ function el(tag, attrs, parent) {
   (parent || $("map")).appendChild(e);
   return e;
 }
-// polyline that splits at the map seam (center-dependent antimeridian)
+// polyline that splits at the map seam (center-dependent antimeridian), or on
+// the globe at the limb
 function polyline(pts, attrs, parent) {
+  if (projMode !== "map") return polylineGlobe(pts, attrs, parent);
   let run = [];
   const flush = () => {
     if (run.length > 1)
@@ -285,9 +387,31 @@ function polyline(pts, attrs, parent) {
   }
   flush();
 }
+function polylineGlobe(pts, attrs, parent) {
+  let run = [], prev = null;
+  const flush = () => {
+    if (run.length > 1)
+      el("polyline", { ...attrs, fill:"none",
+        points: run.map(v => onScreen(v).map(q => q.toFixed(1)).join(",")).join(" ") }, parent);
+    run = [];
+  };
+  for (const [la, lo] of pts) {
+    const v = vec(la, lo), cur = { v, c: dot(v, B.n) };
+    if (!prev) { if (cur.c >= 0) run.push(v); }
+    else if (prev.c >= 0 && cur.c >= 0) run.push(v);
+    else if (prev.c >= 0) { run.push(limbPoint(prev, cur)); flush(); }
+    else if (cur.c >= 0) run.push(limbPoint(prev, cur), v);
+    prev = cur;
+  }
+  flush();
+}
 // filled polygon that survives the seam: unwrap the ring to a contiguous
 // strip, then draw shifted copies; the svg viewport clips the offscreen ones.
-function polygon(latArr, lonArr, attrs, parent) {
+// On the globe: clipped to the visible hemisphere, closed along the limb.
+// `inside(v)` picks the limb arc for regions a hemisphere or larger (night).
+function polygon(latArr, lonArr, attrs, parent, inside) {
+  if (projMode !== "map")
+    return polygonGlobe(latArr.map((la, i) => vec(la, lonArr[i])), attrs, parent, inside);
   let cum = wrapL(lonArr[0]);
   const xs = [cum];
   for (let i = 1; i < lonArr.length; i++) {
@@ -301,6 +425,27 @@ function polygon(latArr, lonArr, attrs, parent) {
       `${((x + off + 180) * S).toFixed(1)},${Y(latArr[i]).toFixed(1)}`);
     el("polygon", { ...attrs, points: pts.join(" ") }, parent);
   }
+}
+function polygonGlobe(vs, attrs, parent, inside) {
+  const cs = vs.map(v => dot(v, B.n)), n = vs.length;
+  const draw = ring => el("polygon", { ...attrs,
+    points: ring.map(v => onScreen(v).map(q => q.toFixed(1)).join(",")).join(" ") }, parent);
+  if (cs.every(c => c < 0)) return;
+  if (cs.every(c => c >= 0)) return draw(vs);
+  const start = cs.findIndex(c => c >= 0), out = [];
+  let exit = null;
+  for (let k = 0; k < n; k++) {
+    const i = (start + k) % n, j = (i + 1) % n;
+    const a = { v: vs[i], c: cs[i] }, b = { v: vs[j], c: cs[j] };
+    if (a.c >= 0) out.push(a.v);
+    if (a.c >= 0 && b.c < 0) { exit = limbPoint(a, b); out.push(exit); }
+    else if (a.c < 0 && b.c >= 0) {
+      const entry = limbPoint(a, b);
+      if (exit) out.push(...limbArc(exit, entry, inside));
+      out.push(entry);
+    }
+  }
+  draw(out);
 }
 
 // ------------------------------------------------------------ sun / terminator
@@ -317,6 +462,25 @@ function solarSubpoint(dateMs) {
   let lon = (ra - gmst) / rad;
   lon = ((lon + 540) % 360) - 180;
   return { lat: decl / rad, lon };
+}
+// Night hemisphere on the globe: the terminator great circle, clipped to the
+// visible side and closed along the limb through the dark side.
+function drawNightGlobe(sun) {
+  const s = vec(sun.lat, sun.lon);
+  const ref = Math.abs(s[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  let a = [s[1] * ref[2] - s[2] * ref[1], s[2] * ref[0] - s[0] * ref[2], s[0] * ref[1] - s[1] * ref[0]];
+  const m = Math.hypot(...a); a = a.map(q => q / m);
+  const b = [s[1] * a[2] - s[2] * a[1], s[2] * a[0] - s[0] * a[2], s[0] * a[1] - s[1] * a[0]];
+  const ring = [];
+  for (let t = 0; t < 360; t += 2)
+    ring.push([0, 1, 2].map(i => a[i] * Math.cos(t * DEG) + b[i] * Math.sin(t * DEG)));
+  const dark = v => dot(v, s) < 0;
+  if (dark(B.n) && ring.every(v => dot(v, B.n) < 1e-9)) {   // facing midnight: all dark
+    el("circle", { cx: GLOBE.cx, cy: GLOBE.cy, r: GR, fill:"#1c2733", opacity:.10,
+                   "pointer-events":"none" });
+    return;
+  }
+  polygonGlobe(ring, { fill:"#1c2733", opacity:.10, "pointer-events":"none" }, null, dark);
 }
 function terminatorPath(sun) {
   // Night-side polygon in SCREEN longitude (s = lon - lonC): immune to the
@@ -373,10 +537,13 @@ function fpaDeg(tr, k) {
 // Wrap map graphics in a group that toggles an info callout when clicked.
 // `info` = {key, title, alt_km?, gamma_deg?, rows?} -- key must be stable
 // across redraws, since redraw() rebuilds every node from scratch.
-function pinGroup(info, lat, lon) {
+function pinGroup(info, lat, lon, at) {
+  const p = at || project(lat, lon);
+  // Far side of the globe: an unattached group, so callers can still draw into it.
+  if (!p.vis) return document.createElementNS(NS, "g");
   const g = el("g", { style:"cursor:pointer" });
   // The glyphs are 4-7 px across; give the pointer something to hit.
-  el("circle", { cx:X(lon), cy:Y(lat), r:11, fill:"transparent" }, g);
+  el("circle", { cx:p.x, cy:p.y, r:11, fill:"transparent" }, g);
   // Swallow the press so the map does not read this as a pan or a map click.
   g.addEventListener("mousedown", ev => ev.stopPropagation());
   g.addEventListener("click", ev => {
@@ -384,13 +551,14 @@ function pinGroup(info, lat, lon) {
     pinOpen = pinOpen === info.key ? null : info.key;
     redraw();
   });
-  if (pinOpen === info.key) pinHit = { info, lat, lon, x:X(lon), y:Y(lat) };
+  if (pinOpen === info.key) pinHit = { info, lat, lon, x:p.x, y:p.y };
   return g;
 }
 
-function marker(lat, lon, color, symbol, name, info) {
-  const x = X(lon), y = Y(lat);
-  const parent = info ? pinGroup(info, lat, lon) : null;
+function marker(lat, lon, color, symbol, name, info, at) {
+  const { x, y, vis } = at || project(lat, lon);
+  if (!vis) return;
+  const parent = info ? pinGroup(info, lat, lon, at) : null;
   if (symbol === "target") {
     el("circle", { cx:x, cy:y, r:7, fill:"none", stroke:color, "stroke-width":1.6 }, parent);
     el("circle", { cx:x, cy:y, r:1.8, fill:color }, parent);
@@ -465,13 +633,37 @@ function redraw() {
   svg.innerHTML = "";
   pinHit = null;
   svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+  GR = projMode === "orbit" ? orbitRadius() : GLOBE.R;
+  globeBasis();
+
+  // globe disc, with a faint darkening toward the limb for depth
+  if (projMode !== "map") {
+    const defs = el("defs", {});
+    const g = el("radialGradient", { id:"limbshade", cx:"50%", cy:"50%", r:"50%" }, defs);
+    el("stop", { offset:"70%", "stop-color":"#1c2733", "stop-opacity":0 }, g);
+    el("stop", { offset:"100%", "stop-color":"#1c2733", "stop-opacity":.09 }, g);
+    el("circle", { cx:GLOBE.cx, cy:GLOBE.cy, r:GR, fill:"#f6f5f2" });
+  }
 
   // graticule
-  for (let lon = -180; lon <= 180; lon += 30)
-    el("line", { x1:X(lon), y1:Y(90), x2:X(lon), y2:Y(-90), stroke:C.grid, "stroke-width":.5 });
-  for (let lat = -60; lat <= 60; lat += 30)
-    el("line", { x1:X(-180), y1:Y(lat), x2:X(180), y2:Y(lat),
-                 stroke:C.grid, "stroke-width": lat ? .5 : 1 });
+  if (projMode === "map") {
+    for (let lon = -180; lon <= 180; lon += 30)
+      el("line", { x1:X(lon), y1:Y(90), x2:X(lon), y2:Y(-90), stroke:C.grid, "stroke-width":.5 });
+    for (let lat = -60; lat <= 60; lat += 30)
+      el("line", { x1:0, y1:Y(lat), x2:360 * S, y2:Y(lat),
+                   stroke:C.grid, "stroke-width": lat ? .5 : 1 });
+  } else {
+    for (let lon = -180; lon < 180; lon += 30) {
+      const pts = [];
+      for (let lat = -90; lat <= 90; lat += 3) pts.push([lat, lon]);
+      polyline(pts, { stroke:C.grid, "stroke-width":.5 });
+    }
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const pts = [];
+      for (let lon = -180; lon <= 180; lon += 3) pts.push([lat, lon]);
+      polyline(pts, { stroke:C.grid, "stroke-width": lat ? .5 : 1 });
+    }
+  }
 
   // coastline
   if (coast) for (const f of coast.features)
@@ -502,6 +694,7 @@ function redraw() {
 
   // module map layers, under the ground track
   const layerCtx = () => ({ plan, tCur, el, polygon, polyline, marker, pinGroup,
+                            project, globe: projMode !== "map", view: projMode,
                             X, Y, C, idxAtTime, fpa: fpaDeg });
   for (const fn of MP.live(MP._layers)) {
     try { fn(layerCtx()); }
@@ -510,23 +703,39 @@ function redraw() {
 
   // day/night terminator at scrub time
   if (plan && display.night) {
-    const ms = Date.parse(plan.track.epoch_utc) + tCur * 1000;
-    el("path", { d: terminatorPath(solarSubpoint(ms)),
-                 fill:"#1c2733", opacity:.10, "pointer-events":"none" });
+    const sun = solarSubpoint(Date.parse(plan.track.epoch_utc) + tCur * 1000);
+    if (projMode !== "map") drawNightGlobe(sun);
+    else el("path", { d: terminatorPath(sun),
+                      fill:"#1c2733", opacity:.10, "pointer-events":"none" });
   }
 
   // ground track (clipped to display window)
   if (plan) {
     const [i0, i1] = trackWindowIdx();
-    const tr = plan.track, pts = [];
+    const tr = plan.track, pts = [], orbit3d = projMode === "orbit";
     for (let i = i0; i <= i1; i++) pts.push([tr.lat[i], tr.lon[i]]);
-    polyline(pts, { stroke:C.blue, "stroke-width":1.1, opacity:.45 });
+    // In the orbit view the ground track stays on the surface, faint, and
+    // the orbit itself is drawn in space.
+    polyline(pts, { stroke:C.blue, "stroke-width": orbit3d ? .8 : 1.1,
+                    opacity: orbit3d ? .25 : .45 });
     // Emphasize the orbit around the playback position: half a rev ahead
     // and behind the satellite dot, clipped to the display window.
-    const halfP = plan.summary.period_s / 2, rev = [];
-    for (let i = i0; i <= i1; i++)
-      if (Math.abs(tr.t[i] - tCur) <= halfP) rev.push([tr.lat[i], tr.lon[i]]);
-    polyline(rev, { stroke:C.blue, "stroke-width":2.2 });
+    const halfP = plan.summary.period_s / 2;
+    if (orbit3d) {
+      const all = [], rev = [];
+      for (let i = i0; i <= i1; i++) {
+        const v = orbitVec(tr.lat[i], tr.lon[i], tr.alt_km[i], tr.t[i]);
+        all.push(v);
+        if (Math.abs(tr.t[i] - tCur) <= halfP) rev.push(v);
+      }
+      spaceLine(all, { stroke:C.blue, "stroke-width":1.1, opacity:.45 });
+      spaceLine(rev, { stroke:C.blue, "stroke-width":2.2 });
+    } else {
+      const rev = [];
+      for (let i = i0; i <= i1; i++)
+        if (Math.abs(tr.t[i] - tCur) <= halfP) rev.push([tr.lat[i], tr.lon[i]]);
+      polyline(rev, { stroke:C.blue, "stroke-width":2.2 });
+    }
 
     // launch site + satellite at scrub time
     if (plan.summary.site_lat != null)
@@ -534,22 +743,33 @@ function redraw() {
              { key:"site", title: plan.summary.site });
     const k = idxAtTime(tCur);
     if (k >= i0 && k <= i1) {
+      let ps = project(tr.lat[k], tr.lon[k]);
+      if (orbit3d) {   // the satellite at altitude, tied to its subpoint
+        const v = orbitVec(tr.lat[k], tr.lon[k], tr.alt_km[k], tr.t[k]);
+        spaceLine([vec(tr.lat[k], tr.lon[k]), v],
+                  { stroke:C.blue, "stroke-width":.8, opacity:.6, "stroke-dasharray":"2 2" });
+        ps = spacePoint(v);
+      }
       marker(tr.lat[k], tr.lon[k], C.blue, "dot", "",
              { key:"sat", title:"satellite", alt_km: tr.alt_km[k],
                gamma_deg: fpaDeg(tr, k),
                rows: [["utc", fmtUTC(Date.parse(tr.epoch_utc)
-                                     + tr.t[k] * 1000).slice(5)]] });
-      el("text", { x:X(tr.lon[k])+8, y:Y(tr.lat[k])-6, fill:C.blue, "font-size":11 })
-        .textContent = tr.alt_km[k].toFixed(0) + " km";
+                                     + tr.t[k] * 1000).slice(5)]] }, ps);
+      if (ps.vis)
+        el("text", { x:ps.x+8, y:ps.y-6, fill:C.blue, "font-size":11 })
+          .textContent = tr.alt_km[k].toFixed(0) + " km";
     }
     // perigee/apogee markers on the first pass (elliptic only)
     if (tr.apsides) for (const ap of tr.apsides) {
-      const x = X(ap.lon_deg), y = Y(ap.lat_deg);
+      const at = orbit3d ? spacePoint(orbitVec(ap.lat_deg, ap.lon_deg, ap.alt_km, ap.t_s))
+                         : project(ap.lat_deg, ap.lon_deg);
+      const { x, y, vis } = at;
+      if (!vis) continue;
       // gamma is exactly 0 at an apsis -- the radial rate vanishes there.
       const g = pinGroup({ key:"apsis:" + ap.kind, alt_km: ap.alt_km, gamma_deg: 0,
                            title: ap.kind === "P" ? "perigee" : "apogee",
                            rows: [["t+", (ap.t_s / 60).toFixed(1) + " min"]] },
-                         ap.lat_deg, ap.lon_deg);
+                         ap.lat_deg, ap.lon_deg, at);
       el("circle", { cx:x, cy:y, r:4,
                      fill: ap.kind === "P" ? C.blue : "#fcfcfb",
                      stroke: C.blue, "stroke-width":1.6 }, g);
@@ -579,6 +799,11 @@ function redraw() {
   // agent scene layers
   if (scene) drawScene();
 
+  // limb shading over the land lines, under the pins
+  if (projMode !== "map")
+    el("circle", { cx:GLOBE.cx, cy:GLOBE.cy, r:GR, fill:"url(#limbshade)",
+                   stroke:C.grid, "stroke-width":1, "pointer-events":"none" });
+
   // the open marker's callout, last so nothing can draw over it
   if (pinHit) drawPin(pinHit);
 }
@@ -602,8 +827,10 @@ function drawScene() {
                                       stroke: color, "stroke-width":1 });
       items.push([color, layer.name]);
     } else if (layer.kind === "label") {
-      el("text", { x:X(layer.lon), y:Y(layer.lat), fill: layer.color || "#0b0b0b",
-                   "font-size":11 }).textContent = layer.text;
+      const p = project(layer.lat, layer.lon);
+      if (p.vis)
+        el("text", { x:p.x, y:p.y, fill: layer.color || "#0b0b0b",
+                     "font-size":11 }).textContent = layer.text;
     }
   }
   const lg = $("legend");
@@ -653,13 +880,6 @@ function setWindow(w0, w1) {
 }
 $("win0").oninput = () => setWindow($("win0").value/1000, $("win1").value/1000);
 $("win1").oninput = () => setWindow($("win0").value/1000, $("win1").value/1000);
-document.querySelectorAll(".cbtn").forEach(b => b.onclick = () => {
-  lonC = +b.dataset.c;
-  document.querySelectorAll(".cbtn").forEach(x => x.classList.remove("on"));
-  b.classList.add("on");
-  view = { x:0, y:0, w:1080, h:540 };   // recenter at default zoom
-  redraw();
-});
 document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => {
   if (!plan) return;
   const tEnd = plan.track.t[plan.track.t.length - 1];
@@ -687,8 +907,14 @@ function tick(now) {
 }
 
 // ------------------------------------------------------------ pan / zoom / click
+// Map: one 360-degree strip drawn around lonC.  Horizontal drag rotates lonC,
+// so the map scrolls endlessly with the seam on the far side of the globe;
+// vertical drag pans (clamped) when zoomed in; the wheel zooms about the
+// cursor.  Globe and orbit views: drag rotates (lonC / latC); the wheel zooms about its
+// centre.  Double-click resets the zoom in every view.
 (function () {
   const svg = $("map");
+  const W = 360 * S, H = 180 * S;
   let down = null, moved = false;
   // getScreenCTM accounts for the preserveAspectRatio letterboxing that a
   // plain boundingClientRect division does not (clicks landed offset).
@@ -697,8 +923,10 @@ function tick(now) {
       .matrixTransform(svg.getScreenCTM().inverse());
     return { x: p.x, y: p.y };
   };
+  const normLon = lon => ((lon + 540) % 360 + 360) % 360 - 180;
+  const clampY = y => Math.max(0, Math.min(H - view.h, y));
   svg.addEventListener("mousedown", ev => {
-    down = { ev, view: { ...view }, scale: svg.getScreenCTM().a };
+    down = { ev, lonC, latC, y: view.y, scale: svg.getScreenCTM().a };
     moved = false; svg.classList.add("dragging");
   });
   window.addEventListener("mousemove", ev => {
@@ -706,19 +934,24 @@ function tick(now) {
     const dx = (ev.clientX - down.ev.clientX) / down.scale;
     const dy = (ev.clientY - down.ev.clientY) / down.scale;
     if (Math.abs(ev.clientX - down.ev.clientX) + Math.abs(ev.clientY - down.ev.clientY) > 4) moved = true;
-    view.x = down.view.x - dx; view.y = down.view.y - dy;
-    if (moved) redraw();
+    if (!moved) return;
+    if (projMode !== "map") {
+      // the point under the cursor follows it (about one radian per radius)
+      lonC = normLon(down.lonC - dx / GLOBE.R / DEG);
+      latC = Math.max(-89, Math.min(89, down.latC + dy / GLOBE.R / DEG));
+    } else {
+      lonC = normLon(down.lonC - dx / S);   // drag right -> the world moves right
+      view.y = clampY(down.y - dy);
+    }
+    redraw();
   });
   window.addEventListener("mouseup", ev => {
     svg.classList.remove("dragging");
     if (down && !moved) {
-      const p = toMap(ev);
-      let lon = p.x / S - 180 + lonC;
-      lon = ((lon + 540) % 360 + 360) % 360 - 180;
-      const lat = 90 - p.y / S;
-      if (lat >= -90 && lat <= 90 && p.x >= 0 && p.x <= 360 * S)
+      const p = toMap(ev), ll = unproject(p.x, p.y);
+      if (ll)
         for (const fn of MP.live(MP._clicks)) {
-          try { fn(lat, lon); }
+          try { fn(ll.lat, ll.lon); }
           catch (e) { console.error("module click:", e); }
         }
     }
@@ -726,16 +959,30 @@ function tick(now) {
   });
   svg.addEventListener("wheel", ev => {
     ev.preventDefault();
-    const p = toMap(ev);
     const f = ev.deltaY > 0 ? 1.2 : 1/1.2;
-    const w = Math.min(1080 * 1.2, Math.max(40, view.w * f));
-    const h = w / 2;
-    view.x = p.x - (p.x - view.x) * (w / view.w);
-    view.y = p.y - (p.y - view.y) * (h / view.h);
-    view.w = w; view.h = h;
+    const w = Math.min(W, Math.max(40, view.w * f)), h = w / 2;
+    if (projMode !== "map") {
+      view = { x: GLOBE.cx - w / 2, y: GLOBE.cy - h / 2, w, h };
+      return redraw();
+    }
+    const p = toMap(ev);
+    const fx = (p.x - view.x) / view.w, fy = (p.y - view.y) / view.h;
+    const cursorLon = p.x / S - 180 + lonC;
+    // Keep the view box centred and put the cursor's longitude back under
+    // the cursor by rotating lonC; latitude by moving the box vertically.
+    view.w = w; view.h = h; view.x = (W - w) / 2;
+    lonC = normLon(cursorLon - (view.x + fx * w) / S + 180);
+    view.y = clampY(p.y - fy * h);
     redraw();
   }, { passive:false });
-  svg.addEventListener("dblclick", () => { view = { x:0, y:0, w:1080, h:540 }; redraw(); });
+  svg.addEventListener("dblclick", () => { view = { x:0, y:0, w:W, h:H }; redraw(); });
+  // map / globe toggle (display menu); the view resets, the longitude carries over
+  document.querySelectorAll("[data-proj]").forEach(b => b.onclick = () => {
+    projMode = b.dataset.proj;
+    document.querySelectorAll("[data-proj]").forEach(x => x.classList.toggle("on", x === b));
+    view = { x:0, y:0, w:W, h:H };
+    redraw();
+  });
 })();
 
 // ------------------------------------------------------------ planning

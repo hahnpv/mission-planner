@@ -14,4 +14,11 @@ row in the core display menu, and `seek(t_s)` to move playback.  A module
 that draws on the map gates on `isOpen()`: a closed panel (or a switched-off
 plugin) puts nothing on the map and makes no requests.  Hooks registered
 through `ctx` go inert automatically while their plugin is inactive.
+
+Map layers (`onDraw`/`onDrawOver` callbacks) get a draw context `d` and
+should draw only through `d.polyline`, `d.polygon` and `d.marker` (or place
+their own elements with `d.project(lat, lon)` -> {x, y, vis}): those work in
+both the map and the globe view, clipping to the visible hemisphere on the
+globe.  `d.X`/`d.Y` are map-view only; `d.view` is "map", "globe" or "orbit"
+(`d.globe` is true for both globe-style views).
 """
