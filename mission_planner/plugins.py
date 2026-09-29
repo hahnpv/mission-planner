@@ -1,5 +1,7 @@
 """Plugin API v1 — how capability code and data packs attach to the core.
 
+The authoring guide is docs/plugins.md; this docstring is the reference.
+
 Two sources, one spec format:
 
 - **built-ins**: files in `mission_planner/modules/`.  Core features built on
@@ -42,18 +44,24 @@ A spec is a dict (conventionally `MODULE`); every key but `name` is optional::
                         (default ["orbit"]); against any other plan it goes inert
                         in the UI as if switched off
 
+Every key is type-checked at load; a bad spec makes the plugin **failed**
+with the reason, never a crash.  Names that must be unique across the core
+and every plugin — mode ids, source ids, blueprint names and MCP tool names —
+are checked in load order: a later plugin that reuses one fails, naming the
+earlier owner.
+
 Dependency chains
 -----------------
 - Load time: a plugin is **failed** if it didn't import or its spec is invalid
-  (including being part of a `requires` cycle), and **unavailable** if a
+  (every member of a `requires` cycle is failed), and **unavailable** if a
   requirement is missing / failed / unavailable, or its own `available()`
   returns a reason.  The reason always names the broken link.
 - Run time: a plugin is **active** when it loaded, its own switch is on, and
   every requirement is active (transitively).  Switching a plugin on also
   switches on its requirements; switching one off leaves dependents' switches
   alone — they go inactive and report which requirement they're waiting on.
-- MP_DISABLE_MODULES=a,b sets the starting switches.  Built-ins can't be
-  switched off.
+- MP_DISABLE_MODULES=a,b sets the starting switches (an unknown name is
+  reported on stderr and ignored).  Built-ins can't be switched off.
 """
 
 from __future__ import annotations
@@ -73,10 +81,16 @@ CORE_STATIC = Path(__file__).parent / "static" / "modules"
 CORE_CATALOG = Path(__file__).parent / "data" / "catalog"
 CORE_MODES = ("kepler", "decay")
 CORE_SOURCES = ("site", "preset")  # launch site / element-anchored preset (planning.py)
+CORE_MCP_TOOLS = ("plan_orbit", "list_launch_sites", "show_scene", "show_plan")  # mcp_server.py
 KINDS = ("orbit", "trajectory")
 
 # (key, builtin, loader) — loader returns the spec, or None for a helper file.
 Source = tuple[str, bool, Callable[[], dict | None]]
+
+
+class PluginError(RuntimeError):
+    """A plugin's own code raised while serving a request (the servers report
+    it as a 500 that names the plugin, unlike a ValueError from bad input)."""
 
 
 @dataclass
@@ -94,6 +108,9 @@ class Record:
     @property
     def requires(self) -> list[str]:
         return list(self.get("requires", []))
+
+    def fail(self, error: str):
+        self.status, self.error = "failed", error
 
 
 def disabled_by_env() -> set[str]:
@@ -113,24 +130,55 @@ def entry_point_sources() -> Iterable[Source]:
         yield ep.name, False, ep.load
 
 
+def _is_path(x) -> bool:
+    return isinstance(x, (str, os.PathLike))
+
+
 def _spec_error(spec) -> str | None:
-    if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
-        return "spec must be a dict with a string 'name'"
+    """Why `spec` is not a valid plugin spec, or None."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("name"), str) or not spec["name"]:
+        return "spec must be a dict with a non-empty string 'name'"
     api = spec.get("api", 1)
     if not isinstance(api, int) or api > API_VERSION:
         return f"targets plugin API {api!r}; this core provides {API_VERSION}"
+    for key in ("title", "description", "js"):
+        if key in spec and not isinstance(spec[key], str):
+            return f"'{key}' must be a string"
     req = spec.get("requires", [])
     if not isinstance(req, (list, tuple)) or not all(isinstance(r, str) for r in req):
         return "'requires' must be a list of plugin names"
+    if "available" in spec and not callable(spec["available"]):
+        return "'available' must be a callable returning a reason or None"
+    bp = spec.get("blueprint")
+    if bp is not None and not (
+        isinstance(getattr(bp, "name", None), str) and hasattr(bp, "register")
+    ):
+        return "'blueprint' must be a flask Blueprint"
+    for key in ("static_dir", "catalog"):
+        if key in spec and not _is_path(spec[key]):
+            return f"'{key}' must be a path"
+    tools = spec.get("mcp_tools", [])
+    if not isinstance(tools, (list, tuple)) or not all(callable(t) for t in tools):
+        return "'mcp_tools' must be a list of functions"
     ww = spec.get("works_with", ["orbit"])
     if not isinstance(ww, (list, tuple)) or not set(ww) <= set(KINDS):
         return f"'works_with' must be a list of {'/'.join(KINDS)}"
+    props = spec.get("propagators", {})
+    if not isinstance(props, dict):
+        return "'propagators' must be a dict of mode -> propagator spec"
+    for mode, pp in props.items():
+        if not isinstance(mode, str) or mode in CORE_MODES:
+            return f"mode {mode!r} is not a valid plugin mode id (core: {'/'.join(CORE_MODES)})"
+        if not isinstance(pp, dict) or not callable(pp.get("fn")):
+            return f"mode '{mode}' needs a callable 'fn'"
     sources = spec.get("sources", {})
     if not isinstance(sources, dict):
         return "'sources' must be a dict of id -> source spec"
     for sid, sp in sources.items():
-        if sid in CORE_SOURCES:
-            return f"source '{sid}' is a core source"
+        if not isinstance(sid, str) or sid in CORE_SOURCES:
+            return (
+                f"source {sid!r} is not a valid plugin source id (core: {'/'.join(CORE_SOURCES)})"
+            )
         if not isinstance(sp, dict) or not callable(sp.get("fn")):
             return f"source '{sid}' needs a callable 'fn'"
         if sp.get("kind") not in KINDS:
@@ -153,15 +201,51 @@ class Registry:
             err = _spec_error(spec)
             name = spec["name"] if err is None else key
             self._add(Record(name, builtin, "failed" if err else "loaded", err, spec))
+        self._check_unique()
         self._resolve()
         off = disabled_by_env()
+        for unknown in sorted(off - set(self.records)):
+            print(
+                f"[mission_planner.plugins] MP_DISABLE_MODULES: no plugin '{unknown}'",
+                file=sys.stderr,
+            )
         for r in self.records.values():
             r.enabled = r.builtin or r.name not in off
 
     def _add(self, rec: Record):
         if rec.name in self.records:
-            rec = Record(rec.name + "#dup", rec.builtin, "failed", f"duplicate name '{rec.name}'")
+            base, n = rec.name, 1
+            while f"{base}#dup{n}" in self.records:
+                n += 1
+            rec = Record(f"{base}#dup{n}", rec.builtin, "failed", f"duplicate name '{base}'")
         self.records[rec.name] = rec
+
+    def _check_unique(self):
+        """Ids that must be unique across the core and all plugins: the first
+        loaded owner keeps them; a later plugin reusing one is failed."""
+        owners: dict[tuple[str, str], str] = {}
+        for mode in CORE_MODES:
+            owners[("mode", mode)] = "core"
+        for sid in CORE_SOURCES:
+            owners[("source", sid)] = "core"
+        for tool in CORE_MCP_TOOLS:
+            owners[("MCP tool", tool)] = "core"
+        for r in self.records.values():
+            if r.status != "loaded":
+                continue
+            claims = [("mode", m) for m in r.get("propagators") or {}]
+            claims += [("source", s) for s in r.get("sources") or {}]
+            claims += [("MCP tool", fn.__name__) for fn in r.get("mcp_tools", [])]
+            if r.get("blueprint") is not None:
+                claims.append(("blueprint", r.get("blueprint").name))
+            for claim in claims:
+                owner = owners.get(claim)
+                if owner is not None:
+                    r.fail(f"{claim[0]} '{claim[1]}' is already provided by {owner}")
+                    break
+            else:
+                for claim in claims:
+                    owners[claim] = f"plugin '{r.name}'"
 
     def _resolve(self):
         done: set[str] = set()
@@ -171,15 +255,20 @@ class Registry:
             if name in done or r.status != "loaded":
                 return
             for dep in r.requires:
-                if dep in stack + (name,):
-                    cycle = " -> ".join(stack[stack.index(dep) :] + (name, dep))
-                    r.status, r.error = "failed", f"dependency cycle: {cycle}"
+                chain = stack + (name,)
+                if dep in chain:
+                    members = chain[chain.index(dep) :]
+                    cycle = " -> ".join(members + (dep,))
+                    for m in members:  # every member of the cycle is broken
+                        self.records[m].fail(f"dependency cycle: {cycle}")
                     break
                 d = self.records.get(dep)
                 if d is None:
                     r.status, r.error = "unavailable", f"requires '{dep}', which is not installed"
                     break
-                check(dep, stack + (name,))
+                check(dep, chain)
+                if r.status != "loaded":  # failed as a member of a cycle found below
+                    break
                 if d.status != "loaded":
                     r.status, r.error = "unavailable", f"requires '{dep}' ({d.status}: {d.error})"
                     break
@@ -190,7 +279,7 @@ class Registry:
                 except Exception as e:
                     reason = f"availability check raised {type(e).__name__}: {e}"
                 if reason:
-                    r.status, r.error = "unavailable", reason
+                    r.status, r.error = "unavailable", str(reason)
             done.add(name)
 
         for name in list(self.records):
@@ -253,6 +342,13 @@ class Registry:
     def source(self, sid: str) -> dict:
         """The spec for a plugin-provided trajectory source, if its plugin is active."""
         return self._provided("sources", sid, "source", CORE_SOURCES)
+
+    def owner_of(self, key: str, item: str) -> str | None:
+        """Name of the plugin providing `item` under spec key `key`, if any."""
+        for r in self.records.values():
+            if item in (r.get(key) or {}):
+                return r.name
+        return None
 
     def catalog_dirs(self) -> list[tuple[str, Path]]:
         """(pack name, dir) in load order: the core's own catalog first."""

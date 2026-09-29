@@ -6,7 +6,7 @@
 //                     set:() => setMode("globe") });
 //
 // Item types:
-//   action  {label, run(), enabled?(), hint?}      closes the menu
+//   action  {label, run(), enabled?()}             closes the menu
 //   check   {label, get(), set(bool), enabled?()}  stays open, so several can be flipped
 //   radio   {label, get(), set(), enabled?()}      closes the menu
 //   head    {label}                                a small section caption
@@ -106,12 +106,11 @@ class Menubar {
       row.className = "mb-item";
       const on = (it.type === "check" || it.type === "radio") && it.get();
       const mark = it.type === "check" ? (on ? "✓" : "") : it.type === "radio" ? (on ? "●" : "") : "";
-      row.innerHTML = `<span class="mb-mark"></span><span class="mb-label"></span><span class="mb-hint"></span>`;
+      row.innerHTML = `<span class="mb-mark"></span><span class="mb-label"></span>`;
       row.children[0].textContent = mark;
       row.children[1].textContent = it.label;
       if (it.swatch) row.children[1].insertAdjacentHTML("afterbegin",
         `<span class="mb-sw" style="background:${it.swatch}"></span>`);
-      row.children[2].textContent = it.hint || "";
       const val = f => typeof f === "function" ? f() : f;
       const detail = val(it.detail), badges = val(it.badges) || [];
       if (badges.length || detail) {

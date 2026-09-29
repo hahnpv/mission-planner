@@ -12,17 +12,14 @@ from .constants import OMEGA_E, RE
 @dataclass(frozen=True)
 class LaunchSite:
     name: str
-    lat_deg: float
+    lat_deg: float  # geocentric latitude on the spherical Earth this package uses
     lon_deg: float
-
-    def min_inclination(self) -> float:
-        """Lowest direct-injection inclination reachable from this site [deg]."""
-        return abs(self.lat_deg)
 
 
 class _SiteCatalog(Mapping):
     """Live name -> LaunchSite view of the catalog: core sites plus active
-    data packs (see catalog.py).  Custom sites are just LaunchSite(name, lat, lon)."""
+    data packs (see catalog.py, which caches the parsed files).  Custom sites
+    are just LaunchSite(name, lat, lon)."""
 
     def _sites(self) -> dict[str, LaunchSite]:
         from .catalog import current
@@ -31,6 +28,9 @@ class _SiteCatalog(Mapping):
 
     def __getitem__(self, name: str) -> LaunchSite:
         return self._sites()[name]
+
+    def __contains__(self, name) -> bool:
+        return name in self._sites()
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._sites())

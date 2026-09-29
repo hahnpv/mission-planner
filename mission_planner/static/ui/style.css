@@ -1,0 +1,121 @@
+/* mission planner UI (static/index.html + static/ui/*.js) */
+:root {
+  --ink:#0b0b0b; --muted:#898781; --grid:#e1e0d9;
+  --blue:#2a78d6; --orange:#eb6834; --green:#1baf7a; --red:#d03b3b;
+  --bg:#fcfcfb; --panel:#f6f5f2;
+}
+* { box-sizing: border-box; }
+body {
+  margin:0; font:13px/1.45 system-ui, sans-serif; color:var(--ink);
+  background:var(--bg); height:100vh; display:flex; flex-direction:column;
+}
+#app { flex:1; display:flex; min-height:0; }
+/* drop-down menu bar (static/ui/menubar.js) */
+#menubar {
+  display:flex; align-items:center; gap:2px; padding:2px 6px;
+  background:var(--panel); border-bottom:1px solid var(--grid);
+}
+.mb-btn { width:auto; border:none; background:transparent; padding:3px 9px; border-radius:4px; }
+.mb-btn:hover, .mb-btn.on { background:var(--grid); }
+.mb-drop {
+  position:fixed; z-index:50; min-width:220px; max-width:380px; padding:4px 0; margin-top:2px;
+  background:var(--bg); border:1px solid var(--grid); border-radius:5px;
+  box-shadow:0 4px 14px rgba(0,0,0,.10);
+}
+.mb-item {
+  display:flex; align-items:flex-start; width:100%; border:none; border-radius:0;
+  background:transparent; padding:4px 14px 4px 6px; text-align:left;
+}
+.mb-item:hover:not(:disabled) { background:#e8f0fb; }
+.mb-item:disabled { color:var(--muted); cursor:default; }
+.mb-mark { width:18px; text-align:center; color:var(--blue); flex:none; }
+.mb-label { flex:1; }
+.mb-sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+.mb-head {
+  font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); padding:6px 14px 2px 24px;
+}
+.mb-sep { border-top:1px solid var(--grid); margin:4px 0; }
+/* segmented button row (trajectory source) */
+.seg { display:flex; margin:2px 0 4px; }
+.seg button { flex:1; border-radius:0; padding:4px 6px; }
+.seg button:first-child { border-radius:4px 0 0 4px; }
+.seg button + button { border-left:none; }
+.seg button:last-child { border-radius:0 4px 4px 0; }
+.seg button.on { background:var(--grid); font-weight:600; }
+.mb-sub { display:flex; flex-wrap:wrap; gap:3px; margin-top:2px; }
+.mb-badge { font-size:10px; color:var(--muted); border:1px solid var(--grid); border-radius:3px; padding:0 4px; }
+.mb-detail { flex-basis:100%; font-size:11px; color:var(--muted); }
+.mb-detail.err { color:var(--red); }
+.mb-item:disabled .mb-sub { opacity:.8; }
+.mb-note { font-size:11px; color:var(--muted); padding:4px 14px 4px 24px; }
+.mb-flag { display:inline-block; width:6px; height:6px; border-radius:50%; margin-left:4px; vertical-align:2px; }
+#side {
+  width:340px; min-width:340px; padding:14px 16px; overflow-y:auto;
+  border-right:1px solid var(--grid); background:var(--panel);
+}
+#main { flex:1; display:flex; flex-direction:column; min-width:0; }
+#mapwrap { flex:1; min-height:0; position:relative; }
+svg#map { width:100%; height:100%; display:block; background:var(--bg); cursor:grab;
+          user-select:none; -webkit-user-select:none; }
+svg#map.dragging { cursor:grabbing; }
+h1 { font-size:13px; letter-spacing:.14em; text-transform:uppercase; margin:0 0 12px; }
+.lbl {
+  font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); margin:12px 0 3px;
+}
+.row { display:flex; gap:8px; align-items:center; }
+.row > * { flex:1; }
+input, select, button {
+  font:inherit; color:var(--ink); background:var(--bg);
+  border:1px solid var(--grid); border-radius:4px; padding:4px 7px; width:100%;
+}
+input[type=range] { padding:0; border:none; background:transparent; }
+button { cursor:pointer; }
+button.primary { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:600; }
+button.ghost { background:transparent; }
+button.small { width:auto; padding:2px 8px; font-size:11px; }
+details.modbox { border-top:1px solid var(--grid); margin-top:12px; padding-top:4px; }
+details.modbox summary { cursor:pointer; display:list-item; margin:0 0 3px; }
+details.modbox[open] summary { margin-bottom:6px; }
+#status { color:var(--muted); min-height:1.4em; margin-top:8px; }
+#status.err { color:var(--red); font-weight:600; }
+#summary, #elements { border-top:1px solid var(--grid); margin-top:12px; padding-top:6px; }
+#summary:empty { display:none; }
+#summary table, #elements table { width:100%; border-collapse:collapse; }
+#summary td, #elements td { padding:1.5px 0; }
+#summary td:last-child, #elements td:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+#timebar {
+  border-top:1px solid var(--grid); padding:8px 14px; background:var(--panel);
+  display:flex; gap:10px; align-items:center;
+}
+#timebar .clock { font-variant-numeric:tabular-nums; min-width:170px; }
+#timebar input[type=range] { flex:1; }
+#winrow { display:flex; gap:6px; align-items:center; padding:0 14px 8px; background:var(--panel); }
+#winrow .lbl { margin:0; }
+/* dual-ended window slider: two overlaid native ranges, thumbs-only hit
+   targets, one shared track with the selected span highlighted */
+#winslider { position:relative; flex:1; height:18px; }
+#winslider input {
+  position:absolute; inset:0; width:100%; height:18px; margin:0; border:none;
+  -webkit-appearance:none; appearance:none; background:transparent; pointer-events:none;
+}
+#winslider input::-webkit-slider-thumb {
+  -webkit-appearance:none; appearance:none; pointer-events:auto; cursor:ew-resize;
+  width:13px; height:13px; border-radius:50%; background:var(--blue);
+  border:2px solid #fff; box-shadow:0 0 0 1px var(--grid);
+}
+#winslider input::-moz-range-thumb {
+  pointer-events:auto; cursor:ew-resize; width:10px; height:10px;
+  border-radius:50%; background:var(--blue); border:2px solid #fff;
+}
+#wintrack, #winfill { position:absolute; top:7.5px; height:3px; border-radius:2px; }
+#wintrack { left:0; right:0; background:var(--grid); }
+#winfill { background:var(--blue); }
+.legend {
+  position:absolute; right:10px; top:10px; background:rgba(252,252,251,.92);
+  border:1px solid var(--grid); border-radius:4px; padding:6px 10px; font-size:12px;
+  max-width:240px;
+}
+.legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+.hint { font-size:11px; color:var(--muted); }

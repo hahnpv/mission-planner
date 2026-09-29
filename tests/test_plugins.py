@@ -21,8 +21,8 @@ def src(spec, name=None, builtin=False):
     return (name or spec["name"], builtin, lambda: spec)
 
 
-def reg_of(*specs, **kw):
-    return Registry([src(s) for s in specs], **kw)
+def reg_of(*specs):
+    return Registry([src(s) for s in specs])
 
 
 # ---------------------------------------------------------------- dependency chains
@@ -59,14 +59,121 @@ def test_cycle_fails_its_members():
         ({"name": "a", "requires": "b"}, "list of plugin names"),
         ({"title": "no name"}, "string 'name'"),
         ({"name": "a", "works_with": ["orbit", "boat"]}, "'works_with'"),
-        ({"name": "a", "sources": {"site": {"fn": print, "kind": "orbit"}}}, "core source"),
+        ({"name": "a", "sources": {"site": {"fn": print, "kind": "orbit"}}}, "core: site/preset"),
         ({"name": "a", "sources": {"s": {"kind": "orbit"}}}, "callable 'fn'"),
         ({"name": "a", "sources": {"s": {"fn": print, "kind": "tle"}}}, "kind must be"),
+        ({"name": "a", "sources": "oops"}, "'sources' must be a dict"),
+        ({"name": "a", "propagators": "oops"}, "'propagators' must be a dict"),
+        ({"name": "a", "propagators": {"m": {"label": "no fn"}}}, "callable 'fn'"),
+        ({"name": "a", "propagators": {"kepler": {"fn": print}}}, "core: kepler/decay"),
+        ({"name": "a", "catalog": 123}, "'catalog' must be a path"),
+        ({"name": "a", "static_dir": 123}, "'static_dir' must be a path"),
+        ({"name": "a", "blueprint": "notabp"}, "flask Blueprint"),
+        ({"name": "a", "mcp_tools": [1]}, "'mcp_tools' must be a list of functions"),
+        ({"name": "a", "available": "yes"}, "'available' must be a callable"),
+        ({"name": "a", "title": 3}, "'title' must be a string"),
+        ({"name": ""}, "non-empty string 'name'"),
     ],
 )
 def test_invalid_specs_fail(spec, why):
     (r,) = Registry([("a", False, lambda: spec)]).records.values()
     assert r.status == "failed" and why in r.error
+
+
+def test_self_requirement_is_a_cycle_not_a_crash():
+    r = reg_of({"name": "a", "requires": ["a"]}).records["a"]
+    assert r.status == "failed" and "cycle: a -> a" in r.error
+
+
+def test_every_member_of_a_long_cycle_fails_and_the_diamond_above_it_waits():
+    reg = reg_of(
+        {"name": "top", "requires": ["l", "r"]},
+        {"name": "l", "requires": ["c1"]},
+        {"name": "r", "requires": ["c1"]},
+        {"name": "c1", "requires": ["c2"]},
+        {"name": "c2", "requires": ["c3"]},
+        {"name": "c3", "requires": ["c1"]},
+    )
+    for n in ("c1", "c2", "c3"):
+        assert reg.records[n].status == "failed" and "cycle" in reg.records[n].error, n
+    for n in ("l", "r", "top"):
+        assert reg.records[n].status == "unavailable", n
+
+
+def test_diamond_dependencies_resolve_and_switch_together():
+    reg = reg_of(
+        {"name": "top", "requires": ["l", "r"]},
+        {"name": "l", "requires": ["base"]},
+        {"name": "r", "requires": ["base"]},
+        {"name": "base"},
+    )
+    assert all(reg.active(n) for n in ("top", "l", "r", "base"))
+    reg.set_enabled("base", False)
+    assert not any(reg.active(n) for n in ("top", "l", "r"))
+    assert reg.waiting_on("top") == "l" and reg.waiting_on("l") == "base"
+    reg.set_enabled("top", True)
+    assert all(reg.active(n) for n in ("top", "l", "r", "base"))
+
+
+def test_duplicate_names_each_get_their_own_failed_record():
+    reg = reg_of({"name": "a", "title": "first"}, {"name": "a"}, {"name": "a"})
+    assert reg.records["a"].status == "loaded" and reg.records["a"].get("title") == "first"
+    dups = [r for r in reg.records.values() if r.name != "a"]
+    assert [r.name for r in dups] == ["a#dup1", "a#dup2"]
+    assert all(r.status == "failed" and "duplicate" in r.error for r in dups)
+
+
+@pytest.mark.parametrize(
+    "first, second, why",
+    [
+        (
+            {"name": "p", "propagators": {"m": {"fn": print}}},
+            {"name": "q", "propagators": {"m": {"fn": print}}},
+            "mode 'm' is already provided by plugin 'p'",
+        ),
+        (
+            {"name": "p", "sources": {"s": {"fn": print, "kind": "orbit"}}},
+            {"name": "q", "sources": {"s": {"fn": print, "kind": "trajectory"}}},
+            "source 's' is already provided by plugin 'p'",
+        ),
+        (
+            {"name": "p", "blueprint": Blueprint("shared", __name__)},
+            {"name": "q", "blueprint": Blueprint("shared", __name__)},
+            "blueprint 'shared' is already provided by plugin 'p'",
+        ),
+        (
+            {"name": "p", "mcp_tools": [print]},
+            {"name": "q", "mcp_tools": [print]},
+            "MCP tool 'print' is already provided by plugin 'p'",
+        ),
+    ],
+)
+def test_shared_ids_fail_the_later_plugin(first, second, why):
+    reg = reg_of(first, second)
+    assert reg.records["p"].status == "loaded"
+    assert reg.records["q"].status == "failed" and reg.records["q"].error == why
+
+
+def test_core_ids_cannot_be_claimed_by_a_plugin():
+    def plan_orbit():
+        pass
+
+    reg = Registry(
+        [
+            *builtin_sources(),
+            src({"name": "q", "mcp_tools": [plan_orbit]}),
+            src({"name": "r", "blueprint": Blueprint("passes", __name__)}),
+        ]
+    )
+    assert "MCP tool 'plan_orbit' is already provided by core" == reg.records["q"].error
+    assert "blueprint 'passes' is already provided by plugin 'passes'" == reg.records["r"].error
+
+
+def test_env_disable_of_an_unknown_name_is_reported_not_fatal(monkeypatch, capsys):
+    monkeypatch.setenv("MP_DISABLE_MODULES", "ghost,a")
+    reg = reg_of({"name": "a"})
+    assert not reg.records["a"].enabled
+    assert "no plugin 'ghost'" in capsys.readouterr().err
 
 
 def test_import_error_is_reported_not_raised():
@@ -236,6 +343,37 @@ def test_switching_off_gates_routes_modes_and_dependents(fake):
     assert client.get("/api/maneuvers/budget?alt1=300&inc1=28.5&alt2=400&inc2=0").status_code == 200
     client.post("/api/modules/needy", json={"enabled": True})  # cascades to fakeplug
     assert client.get("/api/fakeplug").status_code == 200
+
+
+def test_nested_blueprint_routes_are_gated_too(monkeypatch):
+    parent = Blueprint("outer", __name__)
+    child = Blueprint("inner", __name__, url_prefix="/inner")
+
+    @child.route("/ping")
+    def _ping():
+        return jsonify({"ok": True})
+
+    parent.register_blueprint(child)
+    reg = Registry([*builtin_sources(), src({"name": "nested", "blueprint": parent})])
+    monkeypatch.setattr(plugins, "_REGISTRY", reg)
+    client = server.create_app().test_client()
+    assert client.get("/inner/ping").status_code == 200
+    reg.set_enabled("nested", False)
+    assert client.get("/inner/ping").status_code == 404
+
+
+def test_unregistrable_blueprint_fails_its_plugin_not_the_server(monkeypatch):
+    class Broken:
+        name = "broken"
+
+        def register(self, app, options):
+            raise RuntimeError("no routes for you")
+
+    reg = Registry([*builtin_sources(), src({"name": "bad", "blueprint": Broken()})])
+    monkeypatch.setattr(plugins, "_REGISTRY", reg)
+    client = server.create_app().test_client()
+    rec = next(m for m in client.get("/api/modules").get_json() if m["name"] == "bad")
+    assert rec["status"] == "failed" and "no routes for you" in rec["error"]
 
 
 def test_toggle_rejects_bad_requests(fake):

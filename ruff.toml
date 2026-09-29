@@ -16,7 +16,6 @@ known-first-party = ["mission_planner"]
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]                  # re-exported names
-"tests/*.py" = ["F401", "F811"]           # fixtures / redefinition in test scaffolds
 
 [format]
 quote-style = "double"

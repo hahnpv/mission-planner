@@ -1,6 +1,7 @@
 """Mission-planner web UI — flask backend.
 
-House pattern: local flask, no external assets, single-file frontend.
+House pattern: local flask, no external assets, a static frontend
+(static/index.html + static/ui/*.js + the modules' static/modules/*.js).
 
     python -m mission_planner.server        # -> http://127.0.0.1:3030
 
@@ -9,9 +10,10 @@ Endpoints
   /api/coastline                    ne_110m coastline geojson
   /api/sites, /api/presets,         catalog: core data plus active data packs
   /api/overlays                     (see catalog.py), each item tagged with its pack
-  /api/plan?site|lat,lon & alt & inc & epoch & hours & dt & mode & beta
-                                    ground track + orbit summary (decay mode
-                                    adds altitude profile + entry prediction)
+  /api/plan?<plan args>             ground track + orbit summary.  Args (planning.py):
+                                    source=site|preset|<plugin source>; site=<name> or
+                                    lat&lon; hp&ha (or alt) &inc&epoch&leg&pofs for a site,
+                                    node_lon&argp for a preset; hours&dt&mode&beta
   POST /api/plan_job?<plan args>    same, as a background job (for slow plugin modes)
   /api/plan_job/<id>                poll it; done -> same payload as /api/plan
   /api/modules                      built-ins + plugins: status, switches, what each adds
@@ -23,16 +25,22 @@ Endpoints
   /api/scene                        current scene (GET)
   /api/events                       SSE stream: notifies the open tab when a
                                     new scene arrives
+
+Every /api error is JSON {"error": ...}: 400 for bad input (ValueError),
+404/409 for missing or unswitchable things, 500 for a plugin's or the core's
+own failure (the traceback goes to stderr).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
-import time
+import traceback
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
+from werkzeug.exceptions import HTTPException
 
 from . import catalog, jobs
 from .planning import plan_from_args, source_of
@@ -41,32 +49,67 @@ from .scene import Scene
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = 3030
+SSE_HEARTBEAT_S = 15.0
 
-_scene_lock = threading.Lock()
-_scene: dict | None = None
-_scene_version = 0
+
+class SceneStore:
+    """The one scene on display, versioned so SSE listeners can wake up."""
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self.version = 0
+        self.scene: dict | None = None
+
+    def set(self, scene: dict) -> int:
+        with self._cond:
+            self.scene = scene
+            self.version += 1
+            self._cond.notify_all()
+            return self.version
+
+    def get(self) -> dict:
+        with self._cond:
+            return {"version": self.version, "scene": self.scene}
+
+    def wait_beyond(self, version: int, timeout: float) -> int:
+        """Block until the version passes `version` or `timeout` elapses."""
+        with self._cond:
+            self._cond.wait_for(lambda: self.version != version, timeout=timeout)
+            return self.version
 
 
 def create_app() -> Flask:
-    """The web app over the process-wide plugin registry (plugins.registry())."""
+    """The web app over the process-wide plugin registry (plugins.registry()).
+    Never raises for a plugin's sake: a blueprint that can't be registered
+    marks its plugin failed."""
     app = Flask(__name__, static_folder=os.path.join(HERE, "static"))
+    app.extensions["mp_scene"] = scenes = SceneStore()
 
     # Plugins: every loaded built-in/plugin gets its routes registered up front
     # (flask can't add or remove blueprints once serving); the registry's live
     # switches gate them, so a plugin's panel, map layers, routes, modes and data
     # all switch together.
-    _REG = registry()
-    _BP_OWNER = {}  # blueprint name -> plugin name
-    for _r in _REG.records.values():
-        _bp = _r.get("blueprint") if _r.status == "loaded" else None
-        if _bp is not None:
-            app.register_blueprint(_bp)
-            _BP_OWNER[_bp.name] = _r.name
+    reg = registry()
+    bp_owner = {}  # blueprint name -> plugin name
+    for r in reg.records.values():
+        bp = r.get("blueprint") if r.status == "loaded" else None
+        if bp is None:
+            continue
+        try:
+            app.register_blueprint(bp)
+        except Exception as e:
+            r.fail(f"blueprint '{bp.name}' could not be registered: {e}")
+            print(f"[mission_planner.server] {r.name}: {r.error}", file=sys.stderr)
+            continue
+        bp_owner[bp.name] = r.name
 
     @app.before_request
     def _gate_inactive_plugins():
-        owner = _BP_OWNER.get(request.blueprint)
-        if owner is not None and not _REG.active(owner):
+        # request.blueprints lists the chain innermost-first; the root is the
+        # plugin's own blueprint, so nested blueprints are gated too.
+        root = request.blueprints[-1] if request.blueprints else None
+        owner = bp_owner.get(root)
+        if owner is not None and not reg.active(owner):
             return jsonify({"error": f"plugin '{owner}' is not active"}), 404
 
     @app.after_request
@@ -74,6 +117,17 @@ def create_app() -> Flask:
         if request.path.startswith("/api/") or request.path == "/":
             resp.headers["Cache-Control"] = "no-store"
         return resp
+
+    @app.errorhandler(Exception)
+    def _json_errors(e):
+        if isinstance(e, HTTPException):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": e.description}), e.code
+            return e
+        if isinstance(e, ValueError):
+            return jsonify({"error": str(e)}), 400
+        traceback.print_exc()
+        return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
 
     @app.route("/")
     def index():
@@ -105,8 +159,8 @@ def create_app() -> Flask:
             "status": r.status,
             "error": r.error,
             "enabled": r.enabled,
-            "active": _REG.active(r.name),
-            "waiting_on": _REG.waiting_on(r.name),
+            "active": reg.active(r.name),
+            "waiting_on": reg.waiting_on(r.name),
             "requires": r.requires,
             "js_url": f"/plugins/{r.name}/{r.get('js')}" if r.get("js") else None,
             "routes": r.get("blueprint") is not None,
@@ -135,15 +189,16 @@ def create_app() -> Flask:
 
     @app.route("/api/modules")
     def modules():
-        return jsonify([_plugin_record(r) for r in _REG.records.values()])
+        return jsonify([_plugin_record(r) for r in reg.records.values()])
 
     @app.route("/api/modules/<name>", methods=["POST"])
     def toggle_module(name):
-        enabled = (request.get_json(silent=True) or {}).get("enabled")
+        body = request.get_json(silent=True)
+        enabled = body.get("enabled") if isinstance(body, dict) else None
         if not isinstance(enabled, bool):
             return jsonify({"error": 'body must be {"enabled": true|false}'}), 400
         try:
-            _REG.set_enabled(name, enabled)
+            reg.set_enabled(name, enabled)
         except KeyError:
             return jsonify({"error": f"no plugin '{name}'"}), 404
         except ValueError as e:
@@ -153,17 +208,14 @@ def create_app() -> Flask:
 
     @app.route("/plugins/<name>/<path:filename>")
     def plugin_static(name, filename):
-        d = _REG.static_dir(name)
+        d = reg.static_dir(name)
         if d is None:
             abort(404)
         return send_from_directory(d, filename)
 
     @app.route("/api/plan")
     def plan():
-        try:
-            return jsonify(plan_from_args(request.args))
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+        return jsonify(plan_from_args(request.args))
 
     @app.route("/api/plan_job", methods=["POST"])
     def plan_job_start():
@@ -171,14 +223,11 @@ def create_app() -> Flask:
         args = request.args.to_dict()
         # Fail fast on an unknown/inactive source or mode (a trajectory
         # source has no mode).
-        try:
-            sid = source_of(args)
-            kind = "orbit" if sid in CORE_SOURCES else _REG.source(sid)["kind"]
-            mode = args.get("mode", "kepler")
-            if kind == "orbit" and mode not in CORE_MODES:
-                _REG.propagator(mode)
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+        sid = source_of(args)
+        kind = "orbit" if sid in CORE_SOURCES else reg.source(sid)["kind"]
+        mode = args.get("mode") or "kepler"
+        if kind == "orbit" and mode not in CORE_MODES:
+            reg.propagator(mode)
         return jsonify({"job_id": jobs.start(lambda: plan_from_args(args))})
 
     @app.route("/api/plan_job/<job_id>")
@@ -190,34 +239,27 @@ def create_app() -> Flask:
 
     @app.route("/api/scene", methods=["GET", "POST"])
     def scene():
-        global _scene, _scene_version
         if request.method == "POST":
             doc = request.get_json(force=True, silent=True)
             if doc is None:
                 return jsonify({"error": "body must be JSON"}), 400
-            try:
-                validated = Scene.from_json(doc).to_json()
-            except ValueError as e:
-                return jsonify({"error": str(e)}), 400
-            with _scene_lock:
-                _scene = validated
-                _scene_version += 1
-                v = _scene_version
-            return jsonify({"ok": True, "version": v})
-        with _scene_lock:
-            return jsonify({"version": _scene_version, "scene": _scene})
+            validated = Scene.from_json(doc).to_json()  # ValueError -> 400
+            return jsonify({"ok": True, "version": scenes.set(validated)})
+        return jsonify(scenes.get())
 
     @app.route("/api/events")
     def events():
         def stream():
             last = -1
             while True:
-                with _scene_lock:
-                    v = _scene_version
+                v = scenes.wait_beyond(last, SSE_HEARTBEAT_S)
                 if v != last:
                     last = v
                     yield f"data: {json.dumps({'version': v})}\n\n"
-                time.sleep(0.5)
+                else:
+                    # A comment keeps the connection warm and, more to the
+                    # point, makes a closed one fail here instead of never.
+                    yield ": ping\n\n"
 
         return Response(
             stream(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache"}
@@ -226,12 +268,26 @@ def create_app() -> Flask:
     return app
 
 
-app = create_app()
+_APP: Flask | None = None
+
+
+def __getattr__(name):
+    # `server.app` for `flask --app` and existing callers, built on first use
+    # rather than at import so importing this module has no side effects.
+    if name == "app":
+        global _APP
+        if _APP is None:
+            _APP = create_app()
+        return _APP
+    raise AttributeError(name)
 
 
 def main():
-    app.run(host="127.0.0.1", port=PORT, threaded=True)
+    create_app().run(host="127.0.0.1", port=PORT, threaded=True)
 
 
 if __name__ == "__main__":
     main()
+
+
+__all__ = ["create_app", "main", "PORT", "SceneStore"]

@@ -2,27 +2,92 @@
 
 Angles are radians and lengths meters internally; constructors take the
 degree/kilometer units humans actually use.  Epochs are timezone-aware UTC
-datetimes (naive input is assumed UTC).
+datetimes (naive input is assumed UTC).  The Earth is a sphere: site
+latitudes are geocentric (the geodetic gap is ~0.16 deg at 30 deg).
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 
-from .constants import J2, MU, OMEGA_E, RE
+from .constants import J2, MU, RE
 from .launch_site import LaunchSite, launch_azimuth
-from .timebase import as_utc, gmst_rad
+from .timebase import as_utc, earth_rotation_rad, gmst_rad, now_utc
 
 TWO_PI = 2.0 * math.pi
+E_CIRCULAR = 1e-8  # below this eccentricity the orbit is treated as circular
 
 
 def wrap_pi(x):
     """Wrap angle(s) to [-pi, pi)."""
     return (x + math.pi) % TWO_PI - math.pi
+
+
+# ------------------------------------------------------------ element helpers
+def kepler_E(M, e: float, iterations: int = 30):
+    """Eccentric anomaly from mean anomaly (Newton; scalar or array)."""
+    if e < E_CIRCULAR:
+        return M
+    M = np.asarray(M, dtype=float)
+    # Solve on the wrapped anomaly (Newton is only well-behaved near the
+    # principal branch) and add the whole turns back afterwards.
+    Mw = wrap_pi(M)
+    turns = M - Mw
+    # Start above |M| for e > 0.8: Newton from E = M can overshoot near perigee.
+    E = Mw + e * np.sin(Mw) if e < 0.8 else np.where(Mw < 0, -math.pi, math.pi)
+    for _ in range(iterations):
+        E = E - (E - e * np.sin(E) - Mw) / (1.0 - e * np.cos(E))
+    E = E + turns
+    return E if E.shape else float(E)
+
+
+def nu_from_E(E, e: float):
+    """True anomaly from eccentric anomaly (scalar or array)."""
+    return 2.0 * np.arctan2(np.sqrt(1 + e) * np.sin(E / 2), np.sqrt(1 - e) * np.cos(E / 2))
+
+
+def M_from_nu(nu: float, e: float) -> float:
+    """Mean anomaly from true anomaly (scalar)."""
+    if e < E_CIRCULAR:
+        return nu
+    E = 2.0 * math.atan2(math.sqrt(1 - e) * math.sin(nu / 2), math.sqrt(1 + e) * math.cos(nu / 2))
+    return E - e * math.sin(E)
+
+
+def sma_ecc_from_apsides(perigee_km: float, apogee_km: float) -> tuple[float, float]:
+    """(a [m], e) from apsis altitudes [km]; apogee is raised to perigee if lower."""
+    apogee_km = max(apogee_km, perigee_km)
+    rp, ra = RE + perigee_km * 1e3, RE + apogee_km * 1e3
+    return 0.5 * (rp + ra), (ra - rp) / (ra + rp)
+
+
+def j2_secular(a: float, e: float, inc: float) -> tuple[float, float, float]:
+    """Secular J2 rates (raan_dot, argp_dot, dM_dot) [rad/s] for SI elements.
+
+    dM_dot is the *correction* to the two-body mean motion (Vallado 9-37/38/41).
+    """
+    n = math.sqrt(MU / a**3)
+    p = a * (1.0 - e * e)
+    k = 1.5 * J2 * (RE / p) ** 2 * n
+    ci = math.cos(inc)
+    raan_dot = -k * ci
+    argp_dot = 0.5 * k * (5.0 * ci * ci - 1.0)
+    dm_dot = 0.5 * k * math.sqrt(1.0 - e * e) * (3.0 * ci * ci - 1.0)
+    return raan_dot, argp_dot, dm_dot
+
+
+def subpoint_from_orbital(u, raan, inc: float, epoch: datetime, t):
+    """Earth-fixed (lat, lon) [rad] of the point at argument of latitude `u`,
+    node `raan` (both inertial, scalar or array) at seconds-past-epoch `t`."""
+    u, raan = np.asarray(u, dtype=float), np.asarray(raan, dtype=float)
+    si, ci = math.sin(inc), math.cos(inc)
+    lat = np.arcsin(np.clip(si * np.sin(u), -1.0, 1.0))
+    lon_inertial = raan + np.arctan2(ci * np.sin(u), np.cos(u))
+    return lat, wrap_pi(lon_inertial - earth_rotation_rad(epoch, t))
 
 
 @dataclass(frozen=True)
@@ -46,8 +111,6 @@ class Orbit:
         epoch: datetime | None = None,
     ) -> Orbit:
         """Circular orbit; `u0_deg` is the argument of latitude at epoch."""
-        if epoch is None:
-            epoch = datetime.now(timezone.utc)
         return cls(
             a=RE + alt_km * 1e3,
             e=0.0,
@@ -55,7 +118,7 @@ class Orbit:
             raan=math.radians(raan_deg),
             argp=0.0,
             m0=math.radians(u0_deg),
-            epoch=as_utc(epoch),
+            epoch=as_utc(epoch or now_utc()),
         )
 
     @classmethod
@@ -82,21 +145,20 @@ class Orbit:
         `ascending=True` places the site on the northeast-going leg.
         Raises ValueError when inc < |site latitude|.
         """
-        if epoch is None:
-            epoch = datetime.now(timezone.utc)
-        epoch = as_utc(epoch)
+        epoch = as_utc(epoch or now_utc())
         if perigee_km is None:
             perigee_km = 400.0 if alt_km is None else alt_km
         if apogee_km is None:
             apogee_km = perigee_km
-        apogee_km = max(apogee_km, perigee_km)
-        rp, ra = RE + perigee_km * 1e3, RE + apogee_km * 1e3
-        a = 0.5 * (rp + ra)
-        e = (ra - rp) / (ra + rp)
+        a, e = sma_ecc_from_apsides(perigee_km, apogee_km)
 
         lat = math.radians(site.lat_deg)
         inc = math.radians(inc_deg)
-        s = math.sin(lat) / math.sin(inc) if math.sin(inc) else 2.0
+        if abs(math.sin(inc)) < 1e-12:
+            # Equatorial orbit: reachable only from the equator.
+            s = 0.0 if abs(math.sin(lat)) < 1e-12 else 2.0
+        else:
+            s = math.sin(lat) / math.sin(inc)
         if abs(s) > 1.0 + 1e-9:
             raise ValueError(
                 f"inclination {inc_deg:.2f} deg cannot pass over latitude "
@@ -109,16 +171,12 @@ class Orbit:
         # Inertial longitude of the subpoint = raan + atan2(cos i sin u, cos u)
         lon_inertial = math.radians(site.lon_deg) + gmst_rad(epoch)
         raan = lon_inertial - math.atan2(math.cos(inc) * math.sin(u0), math.cos(u0))
-        if e < 1e-9:
+        if e < E_CIRCULAR:
             argp, m0 = 0.0, u0
         else:
             delta = math.radians(perigee_offset_deg)
             argp = wrap_pi(u0 + delta)
-            nu0 = -delta  # true anomaly at the crossing
-            E = 2.0 * math.atan2(
-                math.sqrt(1 - e) * math.sin(nu0 / 2), math.sqrt(1 + e) * math.cos(nu0 / 2)
-            )
-            m0 = E - e * math.sin(E)
+            m0 = M_from_nu(-delta, e)  # true anomaly at the crossing is -delta
         return cls(a=a, e=e, inc=inc, raan=wrap_pi(raan), argp=argp, m0=m0, epoch=epoch)
 
     @classmethod
@@ -139,24 +197,19 @@ class Orbit:
         unless `nu0_deg` is given.  For GEO (i = 0, e = 0) `node_lon_deg`
         degenerates into the station longitude — the subpoint parks there.
         """
-        if epoch is None:
-            epoch = datetime.now(timezone.utc)
-        epoch = as_utc(epoch)
-        apogee_km = max(apogee_km, perigee_km)
-        rp, ra = RE + perigee_km * 1e3, RE + apogee_km * 1e3
-        a, e = 0.5 * (rp + ra), (ra - rp) / (ra + rp)
+        epoch = as_utc(epoch or now_utc())
+        a, e = sma_ecc_from_apsides(perigee_km, apogee_km)
         raan = wrap_pi(gmst_rad(epoch) + math.radians(node_lon_deg))
         argp = math.radians(argp_deg)
         nu0 = math.radians(nu0_deg) if nu0_deg is not None else -argp
-        if e < 1e-9:
-            m0 = nu0
-        else:
-            E = 2.0 * math.atan2(
-                math.sqrt(1 - e) * math.sin(nu0 / 2), math.sqrt(1 + e) * math.cos(nu0 / 2)
-            )
-            m0 = E - e * math.sin(E)
         return cls(
-            a=a, e=e, inc=math.radians(inc_deg), raan=raan, argp=wrap_pi(argp), m0=m0, epoch=epoch
+            a=a,
+            e=e,
+            inc=math.radians(inc_deg),
+            raan=raan,
+            argp=wrap_pi(argp),
+            m0=M_from_nu(nu0, e),
+            epoch=epoch,
         )
 
     # ------------------------------------------------------------- properties
@@ -179,37 +232,37 @@ class Orbit:
 
     @property
     def period(self) -> float:
-        """Nodal-ish period [s] including the J2 mean-anomaly correction."""
+        """Anomalistic period [s] (perigee to perigee) with the J2
+        mean-motion correction — the one `apsis_times` counts in."""
         return TWO_PI / (self.mean_motion + self.j2_rates()[2])
 
-    def j2_rates(self) -> tuple[float, float, float]:
-        """Secular (raan_dot, argp_dot, dM_dot) from J2 [rad/s].
+    @property
+    def nodal_period(self) -> float:
+        """Nodal (draconitic) period [s]: ascending node to ascending node,
+        so J2's argument-of-perigee drift counts too.  This is the period a
+        ground-track repeat is quoted in, and what `revs_per_day` uses."""
+        _, argp_dot, dm_dot = self.j2_rates()
+        return TWO_PI / (self.mean_motion + dm_dot + argp_dot)
 
-        dM_dot is the *correction* to the two-body mean motion.
-        """
-        n = self.mean_motion
-        p = self.a * (1.0 - self.e**2)
-        k = 1.5 * J2 * (RE / p) ** 2 * n
-        ci = math.cos(self.inc)
-        raan_dot = -k * ci
-        argp_dot = 0.5 * k * (5.0 * ci * ci - 1.0)
-        dm_dot = 0.5 * k * math.sqrt(1.0 - self.e**2) * (3.0 * ci * ci - 1.0)
-        return raan_dot, argp_dot, dm_dot
+    def j2_rates(self) -> tuple[float, float, float]:
+        """Secular (raan_dot, argp_dot, dM_dot) from J2 [rad/s]; see `j2_secular`."""
+        return j2_secular(self.a, self.e, self.inc)
 
     def launch_azimuth_deg(self, site_lat_deg: float, ascending: bool = True) -> float:
-        v = math.sqrt(MU / self.a)
-        return launch_azimuth(site_lat_deg, math.degrees(self.inc), ascending=ascending, v_orbit=v)
-
-    def _nu0(self) -> float:
-        """True anomaly at epoch [rad] from M0."""
-        if self.e < 1e-9:
-            return self.m0
-        E = self.m0
-        for _ in range(30):
-            E -= (E - self.e * math.sin(E) - self.m0) / (1.0 - self.e * math.cos(E))
-        return 2.0 * math.atan2(
-            math.sqrt(1 + self.e) * math.sin(E / 2), math.sqrt(1 - self.e) * math.cos(E / 2)
+        """Launch azimuth into this orbit from `site_lat_deg`, with the
+        rotating-Earth correction at the injection speed (the speed at the
+        epoch, which `from_launch_site` places over the site)."""
+        _, v = self.eci_state(0.0)
+        return launch_azimuth(
+            site_lat_deg,
+            math.degrees(self.inc),
+            ascending=ascending,
+            v_orbit=float(np.linalg.norm(v)),
         )
+
+    def nu0(self) -> float:
+        """True anomaly at epoch [rad] from M0."""
+        return float(nu_from_E(kepler_E(self.m0, self.e), self.e))
 
     def apsis_times(self) -> tuple[float, float]:
         """First (perigee, apogee) times [s] after epoch, J2-corrected."""
@@ -219,6 +272,7 @@ class Orbit:
         return t_p, t_a
 
     def summary(self) -> dict:
+        """Elements and rates in km/deg; RAAN and argp in [0, 360), nu0 in [-180, 180)."""
         raan_dot, argp_dot, _ = self.j2_rates()
         return {
             "alt_km": round(self.alt_km, 2),
@@ -227,37 +281,43 @@ class Orbit:
             "a_km": round(self.a * 1e-3, 2),
             "e": round(self.e, 6),
             "inc_deg": round(math.degrees(self.inc), 3),
-            "raan_deg": round(math.degrees(self.raan), 3),
-            "argp_deg": round(math.degrees(self.argp), 3),
-            "nu0_deg": round(math.degrees(wrap_pi(self._nu0())), 3),
+            "raan_deg": round(math.degrees(self.raan) % 360.0, 3),
+            "argp_deg": round(math.degrees(self.argp) % 360.0, 3),
+            "nu0_deg": round(math.degrees(wrap_pi(self.nu0())), 3),
             "epoch_utc": self.epoch.isoformat(),
             "period_s": round(self.period, 1),
-            "revs_per_day": round(86400.0 / self.period, 3),
+            "nodal_period_s": round(self.nodal_period, 1),
+            "revs_per_day": round(86400.0 / self.nodal_period, 3),
             "raan_drift_deg_per_day": round(math.degrees(raan_dot) * 86400, 4),
             "argp_drift_deg_per_day": round(math.degrees(argp_dot) * 86400, 4),
         }
 
     # ------------------------------------------------------------- propagate
-    def _mean_anomaly(self, t: np.ndarray) -> np.ndarray:
-        _, _, dm = self.j2_rates()
-        return self.m0 + (self.mean_motion + dm) * t
+    def mean_anomaly(self, t):
+        """Mean anomaly [rad] at seconds-past-epoch `t` (scalar or array),
+        J2-corrected."""
+        return self.m0 + (self.mean_motion + self.j2_rates()[2]) * np.asarray(t, dtype=float)
+
+    def _anomalies(self, t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(true anomaly, radius [m]) at `t`."""
+        m = self.mean_anomaly(t)
+        if self.e < E_CIRCULAR:
+            return m, np.full_like(m, self.a)
+        E = kepler_E(m, self.e, iterations=12)
+        return nu_from_E(E, self.e), self.a * (1.0 - self.e * np.cos(E))
+
+    def argument_of_latitude(self, t):
+        """Argument of latitude u = argp(t) + nu(t) [rad] at seconds-past-epoch
+        `t` (scalar or array) — where the vehicle is along its orbit, measured
+        from the ascending node."""
+        t = np.asarray(t, dtype=float)
+        nu, _ = self._anomalies(t)
+        return self.argp + self.j2_rates()[1] * t + nu
 
     def eci_positions(self, t: np.ndarray) -> np.ndarray:
         """ECI positions [m], shape (N, 3), at seconds-past-epoch `t`."""
         t = np.asarray(t, dtype=float)
-        m = self._mean_anomaly(t)
-        if self.e < 1e-8:
-            nu = m
-            r = np.full_like(m, self.a)
-        else:
-            ecc = np.full_like(m, float(self.e))
-            E = m.copy()
-            for _ in range(12):
-                E -= (E - ecc * np.sin(E) - m) / (1.0 - ecc * np.cos(E))
-            nu = 2.0 * np.arctan2(
-                np.sqrt(1 + self.e) * np.sin(E / 2), np.sqrt(1 - self.e) * np.cos(E / 2)
-            )
-            r = self.a * (1.0 - self.e * np.cos(E))
+        nu, r = self._anomalies(t)
         raan_dot, argp_dot, _ = self.j2_rates()
         u = self.argp + argp_dot * t + nu  # argument of latitude
         raan = self.raan + raan_dot * t
@@ -272,29 +332,22 @@ class Orbit:
     def eci_state(self, t: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
         """ECI position [m] and inertial velocity [m/s] at seconds-past-epoch t.
 
-        Velocity for the general elliptic case in the perifocal frame,
-        rotated by (raan, inc, argp) at time t — exact for e = 0.
+        The velocity is the two-body (osculating) velocity of the elements
+        at time t: the perifocal state rotated by (raan(t), inc, argp(t)).
+        It omits the tiny J2 secular drift of the frame itself (a few m/s),
+        so it is exact for a two-body orbit and adequate to seed a
+        higher-fidelity propagator.
         """
-        ta = np.asarray([float(t)])
-        m = float(self._mean_anomaly(ta)[0])
-        if self.e < 1e-8:
-            nu, r = m, self.a
-        else:
-            E = m
-            for _ in range(30):
-                E -= (E - self.e * math.sin(E) - m) / (1.0 - self.e * math.cos(E))
-            nu = 2.0 * math.atan2(
-                math.sqrt(1 + self.e) * math.sin(E / 2), math.sqrt(1 - self.e) * math.cos(E / 2)
-            )
-            r = self.a * (1.0 - self.e * math.cos(E))
+        t = float(t)
+        nu, r = (float(x[0]) for x in self._anomalies(np.array([t])))
         p = self.a * (1.0 - self.e**2)
         h = math.sqrt(MU * p)
         # Perifocal position/velocity.
         rp = np.array([r * math.cos(nu), r * math.sin(nu), 0.0])
         vp = np.array([-MU / h * math.sin(nu), MU / h * (self.e + math.cos(nu)), 0.0])
         raan_dot, argp_dot, _ = self.j2_rates()
-        raan = self.raan + raan_dot * float(t)
-        argp = self.argp + argp_dot * float(t)
+        raan = self.raan + raan_dot * t
+        argp = self.argp + argp_dot * t
         cO, sO = math.cos(raan), math.sin(raan)
         ci, si = math.cos(self.inc), math.sin(self.inc)
         cw, sw = math.cos(argp), math.sin(argp)
@@ -313,8 +366,7 @@ class Orbit:
         pos = self.eci_positions(t)
         r = np.linalg.norm(pos, axis=-1)
         lat = np.arcsin(pos[..., 2] / r)
-        theta = gmst_rad(self.epoch) + OMEGA_E * t
-        lon = wrap_pi(np.arctan2(pos[..., 1], pos[..., 0]) - theta)
+        lon = wrap_pi(np.arctan2(pos[..., 1], pos[..., 0]) - earth_rotation_rad(self.epoch, t))
         return lat, lon, r
 
     def ground_track(
@@ -328,14 +380,18 @@ class Orbit:
         """
         from .groundtrack import GroundTrack
 
+        if not dt_s > 0:
+            raise ValueError("dt_s must be positive")
+        if duration_s < 0:
+            raise ValueError("duration_s must not be negative")
         if mode == "decay":
-            from .decay import decay_ground_track
+            from .decay import propagate_decay
 
             if beta is None:
                 raise ValueError(
                     "decay mode requires a ballistic coefficient beta = m/(Cd*A) [kg/m^2]"
                 )
-            return decay_ground_track(self, beta, duration_s, dt_s)
+            return propagate_decay(self, beta, duration_s, dt_s)
         if mode != "kepler":
             from .plugins import registry
 
@@ -344,5 +400,14 @@ class Orbit:
         lat, lon, r = self.subpoints(t)
         return GroundTrack(epoch=self.epoch, t=t, lat=lat, lon=lon, alt=r - RE)
 
-    def with_epoch(self, epoch: datetime) -> Orbit:
-        return replace(self, epoch=as_utc(epoch))
+
+__all__ = [
+    "Orbit",
+    "wrap_pi",
+    "kepler_E",
+    "nu_from_E",
+    "M_from_nu",
+    "sma_ecc_from_apsides",
+    "j2_secular",
+    "subpoint_from_orbital",
+]

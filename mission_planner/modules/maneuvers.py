@@ -34,7 +34,7 @@ def hohmann(alt1_km: float, alt2_km: float) -> dict:
         "dv2_ms": round(dv2, 1),
         "dv_total_ms": round(dv1 + dv2, 1),
         "transfer_time_s": round(math.pi * math.sqrt(at**3 / MU), 1),
-        "a_transfer_km": round((at - RE) * 1e-3, 1),
+        "a_transfer_km": round(at * 1e-3, 1),  # transfer-ellipse semi-major axis
     }
 
 
@@ -65,8 +65,13 @@ def phasing(alt_km: float, lead_deg: float, n_revs: int = 1) -> dict:
     """Co-orbital catch-up: enter a phasing orbit for `n_revs`, re-circularize.
 
     Positive lead = target ahead (fly lower/faster); negative = behind.
-    Flags the result when the phasing perigee dips below 120 km.
+    Flags the result when the phasing perigee dips below 120 km.  Raises
+    ValueError for |lead_deg| >= 360 * n_revs (no phasing orbit exists).
     """
+    if n_revs < 1:
+        raise ValueError("n_revs must be at least 1")
+    if not -360.0 * n_revs < lead_deg < 360.0 * n_revs:
+        raise ValueError(f"lead_deg must be within +/-{360 * n_revs} deg for {n_revs} rev(s)")
     r1 = _r(alt_km)
     t0 = 2.0 * math.pi * math.sqrt(r1**3 / MU)
     tp = t0 * (1.0 - lead_deg / (360.0 * n_revs))

@@ -2,13 +2,16 @@
 
 Averaged King-Hele decay: for a circular orbit under drag,
 
-    da/dt = -rho(h) * sqrt(mu * a) / beta,      beta = m / (Cd * A)  [kg/m^2]
+    da/dt = -F * rho(h) * sqrt(mu * a) / beta,      beta = m / (Cd * A)  [kg/m^2]
 
-integrated with RK4 alongside the argument of latitude and RAAN (J2 secular
-rates re-evaluated at the shrinking semi-major axis).  Fast angles stay
-analytic, so weeks-long horizons stay cheap, and the ground track tightens
-and speeds up as the orbit comes down.  Density comes from the US Standard
-Atmosphere 1976 extended to 1000 km (see atmosphere.py).
+where F = (1 - omega_E * a * cos(i) / v)^2 accounts for the atmosphere
+co-rotating with the Earth (the vehicle sees less relative wind on a
+prograde orbit; ~0.92 at 400 km / 51.6 deg).  Integrated with RK4 alongside
+the argument of latitude and RAAN (J2 secular rates re-evaluated at the
+shrinking semi-major axis).  Fast angles stay analytic, so weeks-long
+horizons stay cheap, and the ground track tightens and speeds up as the
+orbit comes down.  Density comes from the US Standard Atmosphere 1976
+extended to 1000 km (see atmosphere.py).
 
 This is the cheap analytic backend and stops at the entry interface by
 design; higher-fidelity propagators (full 3-DOF flight through reentry to
@@ -22,25 +25,23 @@ import math
 import numpy as np
 
 from .atmosphere import density
-from .constants import ENTRY_INTERFACE_ALT, J2, MU, OMEGA_E, RE
+from .constants import ENTRY_INTERFACE_ALT, MU, OMEGA_E, RE
 from .groundtrack import GroundTrack
-from .orbit import Orbit, wrap_pi
-from .timebase import add_seconds, gmst_rad
+from .orbit import Orbit, j2_secular, subpoint_from_orbital
+from .timebase import add_seconds
 
 R_FLOOR = RE + ENTRY_INTERFACE_ALT
+MAX_ECCENTRICITY = 0.05
 
 
 def _rates(a: float, inc: float, beta: float) -> tuple[float, float, float]:
     """(da/dt, du/dt, draan/dt) for a circular orbit of radius `a`."""
     n = math.sqrt(MU / a**3)
-    rho = density(a - RE)
-    da = -rho * math.sqrt(MU * a) / beta
-    k = 1.5 * J2 * (RE / a) ** 2 * n
-    ci = math.cos(inc)
-    raan_dot = -k * ci
-    # du/dt = n + argp_dot + dM_dot for e = 0.
-    du = n + 0.5 * k * (5.0 * ci * ci - 1.0) + 0.5 * k * (3.0 * ci * ci - 1.0)
-    return da, du, raan_dot
+    v = math.sqrt(MU / a)
+    corot = (1.0 - OMEGA_E * a * math.cos(inc) / v) ** 2
+    da = -corot * density(a - RE) * math.sqrt(MU * a) / beta
+    raan_dot, argp_dot, dm_dot = j2_secular(a, 0.0, inc)
+    return da, n + argp_dot + dm_dot, raan_dot
 
 
 def propagate_decay(
@@ -50,17 +51,19 @@ def propagate_decay(
 
     Returns a GroundTrack whose `extra` holds the decay profile and, when
     the orbit comes down inside the horizon, the entry epoch/subpoint.
+    Starts from the same point as the Kepler track (argument of latitude
+    from the true anomaly at epoch), so switching modes does not jump.
     """
     if beta <= 0:
         raise ValueError("beta must be positive [kg/m^2]")
-    if orbit.e > 0.05:
+    if orbit.e > MAX_ECCENTRICITY:
         raise ValueError(
-            "decay mode assumes near-circular orbits (e <= 0.05)"
+            f"decay mode assumes near-circular orbits (e <= {MAX_ECCENTRICITY})"
             " — use a full-sim plugin mode for elliptic decay"
         )
 
     inc = orbit.inc
-    a, u, raan = orbit.a, orbit.argp + orbit.m0, orbit.raan
+    a, u, raan = orbit.a, orbit.argp + orbit.nu0(), orbit.raan
     t = 0.0
     ts, als, us, raans = [t], [a], [u], [raan]
     entered = False
@@ -100,23 +103,16 @@ def propagate_decay(
 
     t_arr = np.array(ts)
     a_arr = np.array(als)
-    u_arr = np.array(us)
-    raan_arr = np.array(raans)
+    lat, lon = subpoint_from_orbital(np.array(us), np.array(raans), inc, orbit.epoch, t_arr)
 
-    si, ci = math.sin(inc), math.cos(inc)
-    lat = np.arcsin(np.clip(si * np.sin(u_arr), -1.0, 1.0))
-    lon_inertial = raan_arr + np.arctan2(ci * np.sin(u_arr), np.cos(u_arr))
-    theta = gmst_rad(orbit.epoch) + OMEGA_E * t_arr
-    lon = wrap_pi(lon_inertial - theta)
-
-    # Decimated altitude-vs-time profile for plotting.
+    # Decimated altitude-vs-time profile for plotting; the last sample
+    # always makes it in, so the profile ends where the track ends.
     step = max(1, len(t_arr) // 1500)
+    keep = np.unique(np.r_[np.arange(0, len(t_arr), step), len(t_arr) - 1])
     extra = {
-        "mode": "decay",
-        "beta": beta,
         "decay_profile": {
-            "t": t_arr[::step].round(1).tolist(),
-            "alt_km": ((a_arr[::step] - RE) * 1e-3).round(2).tolist(),
+            "t": t_arr[keep].round(1).tolist(),
+            "alt_km": ((a_arr[keep] - RE) * 1e-3).round(2).tolist(),
         },
         "entry": None,
     }
@@ -129,7 +125,3 @@ def propagate_decay(
         }
 
     return GroundTrack(epoch=orbit.epoch, t=t_arr, lat=lat, lon=lon, alt=a_arr - RE, extra=extra)
-
-
-# `Orbit.ground_track(mode="decay")` entry point.
-decay_ground_track = propagate_decay

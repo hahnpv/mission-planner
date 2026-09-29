@@ -3,7 +3,12 @@
 Exposes the orbit-planning library to an agent, plus `show_scene` /
 `show_plan` which push graphics into a running web UI (`python -m
 mission_planner.server`, http://127.0.0.1:3030) so results appear on the
-map in front of the user.  Pattern follows config/mcp_server.py.
+map in front of the user.
+
+Core tools: plan_orbit, list_launch_sites, show_scene, show_plan
+(plugins.CORE_MCP_TOOLS).  Built-in modules and active plugins add theirs
+(`mcp_tools` in their spec) when this process starts; the UI's live plugin
+switches don't reach it — MP_DISABLE_MODULES does.
 """
 
 from __future__ import annotations
@@ -14,8 +19,8 @@ import urllib.request
 
 from mcp.server.fastmcp import FastMCP
 
-from .launch_site import SITES
-from .planning import orbit_from_params as _orbit
+from . import catalog
+from .planning import DEFAULT_SITE, default_dt, orbit_from_params
 from .plugins import registry
 from .scene import Scene
 
@@ -34,6 +39,12 @@ def _post_scene(doc: dict) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=3) as r:
             return json.loads(r.read())
+    except urllib.error.HTTPError as e:  # the UI answered, and said no
+        try:
+            why = json.loads(e.read()).get("error", e.reason)
+        except Exception:
+            why = e.reason
+        raise RuntimeError(f"mission-planner UI rejected the scene ({e.code}): {why}") from e
     except (urllib.error.URLError, OSError) as e:
         raise RuntimeError(
             f"mission-planner UI not reachable at {UI_URL} — start it with "
@@ -43,13 +54,19 @@ def _post_scene(doc: dict) -> dict:
 
 @mcp.tool()
 def list_launch_sites() -> dict:
-    """List the launch-site catalog (core sites plus installed data packs)."""
-    return {"sites": [{"name": s.name, "lat": s.lat_deg, "lon": s.lon_deg} for s in SITES.values()]}
+    """List the launch-site catalog: the core's sites plus those of every data
+    pack active when this server started, each tagged with its pack."""
+    return {
+        "sites": [
+            {"name": s["name"], "lat": s["lat"], "lon": s["lon"], "pack": s["pack"]}
+            for s in catalog.current()["sites"]
+        ]
+    }
 
 
 @mcp.tool()
 def plan_orbit(
-    site: str = "Cape Canaveral / KSC",
+    site: str = DEFAULT_SITE,
     alt_km: float = 400.0,
     inc_deg: float = 51.6,
     epoch_utc: str | None = None,
@@ -81,7 +98,7 @@ def plan_orbit(
             of the site crossing (0 = perigee overhead, 180 = antipodal).
             Note decay mode is circular-only (e <= 0.05).
         epoch_utc: ISO launch epoch (default: now).
-        hours: propagation horizon.
+        hours: propagation horizon (the sample step coarsens with it).
         mode: "kepler" (two-body + J2), "decay" (averaged King-Hele drag
             decay; needs beta), or a mode provided by an installed plugin
             (an unknown mode's error lists the available ones).
@@ -90,21 +107,21 @@ def plan_orbit(
     drag modes add the predicted entry epoch/subpoint and final altitude,
     and modes that fly to the ground add the impact point.
     """
-    orb, ls = _orbit(
-        site,
-        lat,
-        lon,
-        alt_km,
-        inc_deg,
-        epoch_utc,
-        ascending,
-        perigee_km,
-        apogee_km,
-        perigee_offset_deg,
-        node_lon_deg,
-        argp_deg,
+    orb, ls = orbit_from_params(
+        site=site,
+        lat=lat,
+        lon=lon,
+        alt_km=alt_km,
+        inc_deg=inc_deg,
+        epoch_utc=epoch_utc,
+        ascending=ascending,
+        perigee_km=perigee_km,
+        apogee_km=apogee_km,
+        perigee_offset_deg=perigee_offset_deg,
+        node_lon_deg=node_lon_deg,
+        argp_deg=argp_deg,
     )
-    gt = orb.ground_track(hours * 3600.0, 60.0, mode=mode, beta=beta)
+    gt = orb.ground_track(hours * 3600.0, default_dt(hours, 60.0), mode=mode, beta=beta)
     out = {
         "summary": orb.summary(),
         "launch_azimuth_deg": None
@@ -118,53 +135,6 @@ def plan_orbit(
     if gt.extra.get("impact") is not None:
         out["impact"] = gt.extra["impact"]
     return out
-
-
-@mcp.tool()
-def find_passes(
-    tgt_lat: float,
-    tgt_lon: float,
-    site: str = "Cape Canaveral / KSC",
-    alt_km: float = 400.0,
-    inc_deg: float = 51.6,
-    epoch_utc: str | None = None,
-    hours: float = 48.0,
-    within_km: float = 500.0,
-    mode: str = "kepler",
-    beta: float | None = None,
-    lat: float | None = None,
-    lon: float | None = None,
-    ascending: bool = True,
-    perigee_km: float | None = None,
-    apogee_km: float | None = None,
-    perigee_offset_deg: float = 0.0,
-    node_lon_deg: float | None = None,
-    argp_deg: float = 0.0,
-) -> dict:
-    """Find overflight windows of a target for a planned orbit.
-
-    Returns UTC AOS/LOS/closest-approach per pass with miss distance,
-    heading, and leg direction.  perigee_km/apogee_km/perigee_offset_deg
-    plan an elliptic orbit; site="" with node_lon_deg/argp_deg plans an
-    element-anchored orbit (see plan_orbit).
-    """
-    orb, _ = _orbit(
-        site,
-        lat,
-        lon,
-        alt_km,
-        inc_deg,
-        epoch_utc,
-        ascending,
-        perigee_km,
-        apogee_km,
-        perigee_offset_deg,
-        node_lon_deg,
-        argp_deg,
-    )
-    gt = orb.ground_track(hours * 3600.0, 30.0, mode=mode, beta=beta)
-    passes = gt.passes(tgt_lat, tgt_lon, within_km=within_km)
-    return {"n": len(passes), "passes": passes}
 
 
 @mcp.tool()
@@ -182,7 +152,7 @@ def show_scene(scene: dict) -> dict:
 
 @mcp.tool()
 def show_plan(
-    site: str = "Cape Canaveral / KSC",
+    site: str = DEFAULT_SITE,
     alt_km: float = 400.0,
     inc_deg: float = 51.6,
     epoch_utc: str | None = None,
@@ -194,14 +164,38 @@ def show_plan(
     lat: float | None = None,
     lon: float | None = None,
     ascending: bool = True,
+    perigee_km: float | None = None,
+    apogee_km: float | None = None,
+    perigee_offset_deg: float = 0.0,
+    node_lon_deg: float | None = None,
+    argp_deg: float = 0.0,
 ) -> dict:
-    """Plan an orbit and display it graphically in the running map UI."""
-    orb, ls = _orbit(site, lat, lon, alt_km, inc_deg, epoch_utc, ascending)
-    gt = orb.ground_track(hours * 3600.0, 60.0, mode=mode, beta=beta)
+    """Plan an orbit (same parameters as plan_orbit) and display it
+    graphically in the running map UI; with tgt_lat/tgt_lon the passes over
+    that target are listed too."""
+    orb, ls = orbit_from_params(
+        site=site,
+        lat=lat,
+        lon=lon,
+        alt_km=alt_km,
+        inc_deg=inc_deg,
+        epoch_utc=epoch_utc,
+        ascending=ascending,
+        perigee_km=perigee_km,
+        apogee_km=apogee_km,
+        perigee_offset_deg=perigee_offset_deg,
+        node_lon_deg=node_lon_deg,
+        argp_deg=argp_deg,
+    )
+    gt = orb.ground_track(hours * 3600.0, default_dt(hours, 60.0), mode=mode, beta=beta)
     d = gt.to_json()
-    sc = Scene(title=f"{ls.name} · {alt_km:.0f} km / {inc_deg:.1f}°")
+    s = orb.summary()
+    shape = f"{s['perigee_km']:.0f}x{s['apogee_km']:.0f} km" if orb.e > 1e-4 else f"{alt_km:.0f} km"
+    where = ls.name if ls is not None else f"node {node_lon_deg or 0:.0f}°E"
+    sc = Scene(title=f"{where} · {shape} / {inc_deg:.1f}°")
     sc.track("ground track", d["lat"], d["lon"], color="#2a78d6")
-    sc.marker(ls.name, ls.lat_deg, ls.lon_deg, symbol="site", color="#898781")
+    if ls is not None:
+        sc.marker(ls.name, ls.lat_deg, ls.lon_deg, symbol="site", color="#898781")
     if gt.extra.get("entry"):
         e = gt.extra["entry"]
         sc.marker("entry", e["lat_deg"], e["lon_deg"], symbol="target", color="#d03b3b")
@@ -214,15 +208,18 @@ def show_plan(
             [[p["ca_utc"][5:16], p["min_dist_km"], p["direction"]] for p in passes[:12]],
         )
     res = _post_scene(sc.to_json())
-    return {"ok": True, "url": UI_URL, "version": res.get("version"), "summary": orb.summary()}
+    return {"ok": True, "url": UI_URL, "version": res.get("version"), "summary": s}
 
 
-# Built-in and plugin tools register after the core ones.  Plugin switches
-# are read once here (MP_DISABLE_MODULES); the UI's live toggles don't reach
-# this process.
-for _r in registry().active_records():
-    for _fn in _r.get("mcp_tools", []):
-        mcp.tool()(_fn)
+def _register_plugin_tools():
+    """Built-in and plugin tools, after the core ones.  Names are unique by
+    construction: the registry fails a plugin whose tool name is taken."""
+    for r in registry().active_records():
+        for fn in r.get("mcp_tools", []):
+            mcp.tool()(fn)
+
+
+_register_plugin_tools()
 
 
 if __name__ == "__main__":

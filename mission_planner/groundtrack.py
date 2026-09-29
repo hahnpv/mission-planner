@@ -30,7 +30,8 @@ def gc_distance_km(lat1, lon1, lat2, lon2):
 class GroundTrack:
     """Sub-satellite track: seconds-past-epoch `t`, lat/lon [rad], alt [m].
 
-    `extra` carries mode-specific payloads (e.g. the decay profile).
+    `extra` carries mode-specific payloads that `to_json` merges into the
+    track (e.g. `decay_profile`, `entry`, `impact`).
     """
 
     epoch: datetime
@@ -40,11 +41,19 @@ class GroundTrack:
     alt: np.ndarray
     extra: dict = field(default_factory=dict)
 
+    def __post_init__(self):
+        n = len(self.t)
+        if not (len(self.lat) == len(self.lon) == len(self.alt) == n):
+            raise ValueError("t, lat, lon and alt must have the same length")
+
     @property
     def heading(self) -> np.ndarray:
-        """Earth-relative track heading [rad], finite-differenced."""
+        """Earth-relative track heading [rad], finite-differenced (NaN for a
+        single-sample track)."""
+        if len(self.lat) < 2:
+            return np.full(len(self.lat), np.nan)
         h = bearing(self.lat[:-1], self.lon[:-1], self.lat[1:], self.lon[1:])
-        return np.append(h, h[-1] if len(h) else np.array([]))
+        return np.append(h, h[-1])
 
     def passes(
         self,
@@ -53,11 +62,13 @@ class GroundTrack:
         within_km: float = 500.0,
         max_passes: int = 200,
     ) -> list[dict]:
-        """Overflight windows where the subpoint comes within `within_km`.
-
-        Each window reports UTC entry/exit/closest-approach times, the
-        minimum ground distance, approach heading, and leg direction.
+        """Overflight windows where the subpoint comes within `within_km`
+        (inclusive).  Each window reports UTC entry/exit/closest-approach
+        times, the minimum ground distance, approach heading, and leg
+        direction.  A track with fewer than two samples has no passes.
         """
+        if len(self.t) < 2:
+            return []
         tgt_lat = np.radians(tgt_lat_deg)
         tgt_lon = np.radians(tgt_lon_deg)
         d = gc_distance_km(self.lat, self.lon, tgt_lat, tgt_lon)
@@ -83,7 +94,7 @@ class GroundTrack:
                     "ca_utc": add_seconds(self.epoch, self.t[k]).isoformat(),
                     "ca_t_s": float(self.t[k]),
                     "min_dist_km": round(float(d[k]), 1),
-                    "heading_deg": round(float(np.degrees(hdg[k])) % 360.0, 1),
+                    "heading_deg": round(float(np.degrees(hdg[k])) % 360.0, 1) % 360.0,
                     "direction": "ascending" if ascending else "descending",
                     "alt_km": round(float(self.alt[k]) * 1e-3, 1),
                 }

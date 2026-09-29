@@ -25,6 +25,9 @@ MP.register({
       $("mv_inc1").value = p.summary.inc_deg;
       if (!$("mv_inc2").value) $("mv_inc2").value = p.summary.inc_deg;
     };
+    // Null at load time; kept because a module registered later (a plugin
+    // switched on) is caught up on the current plan through onPlan by
+    // MP.apply, and this seeds the form the same way for that case.
     fill(ctx.getPlan());
     ctx.onPlan(fill);
 

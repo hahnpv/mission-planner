@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Generic orbital mission planning: launch-site orbit design, J2/drag-decay propagation, overflight search, web UI + MCP server, plugin API"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Hahn Aero" }]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: POSIX :: Linux",
     "Topic :: Scientific/Engineering",
-    "Private :: Do Not Upload",
 ]
 dependencies = [
     "numpy>=1.24",
@@ -24,11 +24,13 @@ dependencies = [
 
 [project.optional-dependencies]
 ui = ["flask>=3.0"]
-mcp = ["mcp[cli]>=1.0"]
-dev = ["pytest>=8.0", "flask>=3.0"]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=8.0", "flask>=3.0", "mcp>=1.0", "ruff>=0.5"]
 
 [tool.setuptools.packages.find]
 include = ["mission_planner*"]
 
 [tool.setuptools.package-data]
-mission_planner = ["data/*.geojson", "data/catalog/*.yaml", "static/*.html", "static/modules/*"]
+# Everything the web UI serves and the catalog reads: recursive, so a new
+# static/ui/*.js or data-pack file can't be left out of a wheel.
+mission_planner = ["data/**/*", "static/**/*"]

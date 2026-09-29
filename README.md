@@ -9,8 +9,11 @@ core attach as **plugins**; sites, presets and map overlays are **data**.
 ## Install
 
 ```bash
-pip install -e ".[dev]"        # numpy, scipy, pyyaml + flask, pytest
+pip install -e ".[dev]"        # numpy, scipy, pyyaml + flask, mcp, pytest, ruff
 ```
+
+`[ui]` (flask) and `[mcp]` are the runtime extras; the library alone needs
+neither.
 
 ## Library
 
@@ -30,7 +33,7 @@ gt.extra["entry"]                      # predicted entry epoch + subpoint (or No
 | mode | physics | cost | stops at |
 |---|---|---|---|
 | `kepler` | two-body + J2 secular | ms | never |
-| `decay` | averaged King-Hele, US76 extended to 1000 km | ms | 100 km interface |
+| `decay` | averaged King-Hele with a co-rotating atmosphere, US76 extended to 1000 km | ms | 100 km interface |
 | *plugin* | whatever a plugin's propagator flies | — | — |
 
 Decay mode uses a static atmosphere, so lifetimes are nominal, not predictions
@@ -44,17 +47,18 @@ python -m mission_planner.server       # -> http://127.0.0.1:3030
 ```
 
 Launch-site / preset / altitude / inclination / epoch controls, propagation
-mode with a β input and altitude-decay sparkline, a pan/zoom map, a time
-scrubber with play/pause, and a **display-window** control (1 rev / 90 min /
-24 h / all, or drag the span handles).  The **display** menu switches between
-a flat **map** (drag sideways to scroll endlessly), a **globe** (the map
-projected on a sphere; drag to rotate) and an **orbit** view (the orbit drawn
-in space around the earth, scaled to fit — most telling for high orbits), and
-toggles the horizon footprint at the playback position, day/night shading, and each map
-overlay.  Built in: **target passes** (click the map for overflight windows;
-*subpoint proximity*, not line of sight — the horizon footprint answers that)
-and **maneuvers** (Hohmann, plane change, phasing, deorbit-to-interface
-budgets).  Zero external assets.
+mode with a β input, a pan/zoom map, a time scrubber with play/pause, and a
+**display-window** control (1 rev / 90 min / 24 h / all, or drag the span
+handles).  The **View** menu switches between a flat **map** (drag sideways to
+scroll endlessly), a **globe** (the map projected on a sphere; drag to rotate)
+and an **orbit** view (the orbit drawn in space around the earth, scaled to
+fit — most telling for high orbits), and toggles the horizon footprint at the
+playback position, day/night shading, and each map overlay.  Built in:
+**target passes** (click the map for overflight windows; *subpoint proximity*,
+not line of sight — the horizon footprint answers that), **maneuvers**
+(Hohmann, plane change, phasing, deorbit-to-interface budgets) and the
+**drag decay** readout (altitude sparkline, entry / impact).  Zero external
+assets; the frontend is `static/index.html` over `static/ui/*.js`.
 
 **Every marker on the map is a clickable entity**: core pins, module pins and
 agent-pushed scene markers all go through `marker(lat, lon, color, symbol,
@@ -80,32 +84,36 @@ A plugin is an installed package that registers a spec under the
 example = "my_plugins.example:MODULE"
 ```
 
-The spec can add REST routes (a flask blueprint), a UI panel, MCP tools,
-propagation modes, and a data-pack catalog, and can **require** other
-plugins.  The full key list and the dependency-chain rules are in
-`mission_planner/plugins.py`; the UI contract (`MP.register`, `ctx`) is in
-`mission_planner/modules/__init__.py`.  Built-in features use the same
-contract from `mission_planner/modules/`.
+The spec can add REST routes (a flask blueprint), a UI panel and map layers,
+MCP tools, propagation modes, trajectory sources, and a data-pack catalog,
+and can **require** other plugins.  **The authoring guide is
+[docs/plugins.md](docs/plugins.md)**; the key reference is the docstring of
+`mission_planner/plugins.py`.  Built-in features use the same contract from
+`mission_planner/modules/`.
 
-The UI's **plugins** box lists every installed plugin with what it adds, its
+The **Plugins** menu lists every installed plugin with what it adds, its
 status (active, off, waiting on a requirement, unavailable, failed — with the
-reason), and a live on/off switch: panels, map layers, routes, modes and data
-switch without a reload.  `MP_DISABLE_MODULES=a,b` sets the starting
-switches; MCP tools are fixed when the MCP server starts.
+reason), and a live on/off switch: panels, map layers, routes, modes,
+sources and data switch without a reload.  `MP_DISABLE_MODULES=a,b` sets the
+starting switches; MCP tools are fixed when the MCP server starts.
 
 ## Agent access
 
-REST: everything the UI does is a GET (`/api/plan`, `/api/passes`), and
-`POST /api/scene` pushes a Scene document (tracks / markers / polygons /
-window tables — see `mission_planner/scene.py`) that renders live in the open
-browser tab via SSE.
+REST: `GET /api/plan?…` and the modules' routes (`/api/passes`,
+`/api/maneuvers/budget`, …) read the plan from query args; `POST
+/api/plan_job` runs a slow plan in the background; `POST /api/scene` pushes a
+Scene document (tracks / markers / polygons / window tables — see
+`mission_planner/scene.py`) that renders live in the open browser tab via
+SSE.  Every error is JSON `{"error": …}` — 400 for bad input, with a reason.
 
 MCP: `python -m mission_planner.mcp_server` exposes `plan_orbit`,
-`find_passes`, `list_launch_sites`, `show_scene`, `show_plan` (plan + display
-in one call), and `maneuver_budget`, plus any active plugin's tools.
+`list_launch_sites`, `show_scene`, `show_plan` (plan + display in one call),
+the built-in modules' `find_passes` and `maneuver_budget`, plus any active
+plugin's tools.
 
 ## Tests
 
 ```bash
-python -m pytest -q
+python -m pytest -q          # runs over the built-in modules only; no plugin needed
+ruff check . && ruff format --check .
 ```

@@ -11,10 +11,14 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta, timezone
 
-TWO_PI = 6.283185307179586
+from .constants import OMEGA_E
 
 JD_J2000 = 2451545.0
 JULIAN_CENTURY = 36525.0
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def as_utc(dt: datetime) -> datetime:
@@ -51,6 +55,13 @@ def gmst_rad(dt: datetime) -> float:
     )
     gmst = (gmst_s % 86400.0) / 240.0  # seconds -> degrees (360/86400)
     return math.radians(gmst % 360.0)
+
+
+def earth_rotation_rad(epoch: datetime, t):
+    """Earth rotation angle [rad] at seconds-past-`epoch` `t` (scalar or
+    array): GMST at the epoch advanced at the IERS rate.  Subtract it from an
+    inertial longitude to get the earth-fixed one."""
+    return gmst_rad(epoch) + OMEGA_E * t
 
 
 def add_seconds(epoch: datetime, seconds: float) -> datetime:

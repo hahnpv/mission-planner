@@ -17,14 +17,29 @@ A catalog directory holds any of::
 
 Every item comes back tagged with the pack it came from.  A later pack's
 item replaces an earlier one of the same name.
+
+`current()` is cached: the files are re-read only when the set of active
+packs or a file's modification time changes, so a plan request costs a few
+stats, not a re-parse of every overlay.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import yaml
+
+_lock = threading.Lock()
+_cache: tuple[tuple, dict] | None = None  # (key, merged catalog)
+
+
+def _files(path: Path) -> list[Path]:
+    out = [path / "sites.yaml", path / "presets.yaml"]
+    out += sorted((path / "overlays").glob("*.geojson"))
+    out += sorted((path / "overlays").glob("*.yaml"))
+    return out
 
 
 def _load_dir(pack: str, path: Path) -> dict[str, list[dict]]:
@@ -51,6 +66,7 @@ def _load_dir(pack: str, path: Path) -> dict[str, list[dict]]:
 
 
 def merged(dirs: list[tuple[str, Path]]) -> dict[str, list[dict]]:
+    """Uncached merge of catalog directories in order (later packs win)."""
     by_kind: dict[str, dict[str, dict]] = {"sites": {}, "presets": {}, "overlays": {}}
     for pack, path in dirs:
         for kind, items in _load_dir(pack, Path(path)).items():
@@ -59,8 +75,26 @@ def merged(dirs: list[tuple[str, Path]]) -> dict[str, list[dict]]:
     return {kind: list(items.values()) for kind, items in by_kind.items()}
 
 
+def _key(dirs: list[tuple[str, Path]]) -> tuple:
+    key = []
+    for pack, path in dirs:
+        path = Path(path)
+        stamps = tuple((str(f), f.stat().st_mtime_ns) for f in _files(path) if f.exists())
+        key.append((pack, str(path), stamps))
+    return tuple(key)
+
+
 def current() -> dict[str, list[dict]]:
-    """The core catalog plus every active data pack."""
+    """The core catalog plus every active data pack (cached, see module doc)."""
+    global _cache
     from .plugins import registry
 
-    return merged(registry().catalog_dirs())
+    dirs = registry().catalog_dirs()
+    key = _key(dirs)
+    with _lock:
+        if _cache is not None and _cache[0] == key:
+            return _cache[1]
+    cat = merged(dirs)
+    with _lock:
+        _cache = (key, cat)
+    return cat

@@ -1,24 +1,23 @@
 """Built-in capability modules — core features on the plugin contract.
 
-Each file here exposes a `MODULE` spec (full key list in plugins.py) and is
+Each file here exposes a `MODULE` spec (key reference in plugins.py) and is
 always active; external plugins use the same contract but arrive through the
 `mission_planner.plugins` entry-point group and can be switched live.
 
 The UI side of a module is its `js` asset, which calls
-`MP.register({title, html, open?, init(ctx)})`.  `ctx` carries
-`api`/`status`/`redraw`, `getPlan()`/`planArgs()`, `onPlan(cb)`,
-`isOpen()`/`onToggle(cb)` for the module's own collapsible panel,
-`onDraw(fn)`/`onDrawOver(fn)` for map layers under/over the ground track,
-`onClick(fn)` for map clicks, `addDisplayToggle(label, checked, cb)` for a
-row in the core display menu, and `seek(t_s)` to move playback.  A module
-that draws on the map gates on `isOpen()`: a closed panel (or a switched-off
-plugin) puts nothing on the map and makes no requests.  Hooks registered
-through `ctx` go inert automatically while their plugin is inactive.
+`MP.register({title, html, open?, init(ctx)})`.  The full `ctx` and
+draw-context reference, with examples of every capability, is the plugin
+authoring guide, docs/plugins.md.  In short: `ctx` carries `api` / `status`
+/ `redraw`, `getPlan()` / `planArgs()`, `onPlan(cb)`, `isOpen()` /
+`onToggle(cb)` for the module's collapsible panel, `onDraw(fn)` /
+`onDrawOver(fn)` for map layers under / over the ground track, `onClick(fn)`
+for map clicks, `addDisplayToggle` / `addMenuItem` for menu rows, `seek(t_s)`
+to move playback, and `addSource` / `updateSource` for a trajectory source's
+UI half.  A module that draws on the map gates on `isOpen()`, draws only
+through the draw context (`d.polyline`, `d.polygon`, `d.marker`,
+`d.project`), and uses stable `marker()` keys; hooks registered through
+`ctx` go inert automatically while their plugin is inactive.
 
-Map layers (`onDraw`/`onDrawOver` callbacks) get a draw context `d` and
-should draw only through `d.polyline`, `d.polygon` and `d.marker` (or place
-their own elements with `d.project(lat, lon)` -> {x, y, vis}): those work in
-both the map and the globe view, clipping to the visible hemisphere on the
-globe.  `d.X`/`d.Y` are map-view only; `d.view` is "map", "globe" or "orbit"
-(`d.globe` is true for both globe-style views).
+Modules here: passes (overflight windows), maneuvers (impulsive budgets),
+decay (the drag-decay readout panel).
 """

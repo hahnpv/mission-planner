@@ -1,28 +1,63 @@
 """Request parameters -> Orbit / GroundTrack / map payload.
 
 Shared by the web server, the MCP server and plugins, so every surface reads
-an orbit from its parameters the same way.  No flask here: plugins import it
-at module scope.
+an orbit from its parameters the same way: `orbit_from_args` is the one
+reader (query-string style args), and `orbit_from_params` (MCP-tool style
+keywords) builds the same args and delegates to it.  No flask here: plugins
+import it at module scope.
+
+Bad input is a ValueError with a message meant for the user (the servers
+turn it into HTTP 400 / a tool error).
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 import numpy as np
 
 from .constants import RE
 from .launch_site import SITES, LaunchSite
 from .orbit import Orbit
-from .plugins import CORE_SOURCES
+from .plugins import CORE_SOURCES, PluginError
+from .timebase import now_utc
 
 DEFAULT_SITE = "Cape Canaveral / KSC"
+# Ceiling on samples per track: 200k points is ~20 MB of JSON and a few
+# hundred ms to compute; anything beyond that is a mistake in hours/dt.
+MAX_TRACK_POINTS = 200_000
+# The UI's rule for a sample step that keeps long horizons at a sane point count.
+TARGET_POINTS = 20_000
 
 
 def parse_epoch(s: str | None) -> datetime:
     if not s:
-        return datetime.now(timezone.utc)
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return now_utc()
+    try:
+        return datetime.fromisoformat(s.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"epoch {s!r} is not an ISO 8601 date-time (e.g. 2026-08-23T00:00:00Z)")
+
+
+def opt_float(a, key: str, default: float | None = None) -> float | None:
+    """`a[key]` as a float; a missing or empty value gives `default`."""
+    v = a.get(key)
+    if v is None or v == "":
+        return default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number, not {v!r}")
+
+
+def req_float(a, key: str, default: float) -> float:
+    return opt_float(a, key, default)
+
+
+def default_dt(hours: float, floor: float = 30.0) -> float:
+    """Sample step [s] for a horizon: `floor` until the track would exceed
+    TARGET_POINTS samples, then coarser (the UI's rule)."""
+    return max(floor, round(hours * 3600.0 / TARGET_POINTS / 10.0) * 10.0)
 
 
 def source_of(a) -> str:
@@ -37,6 +72,36 @@ def _plugin_source(sid: str) -> dict:
     return registry().source(sid)
 
 
+def _call_plugin(sid: str, sp: dict, a):
+    try:
+        return sp["fn"](a)
+    except ValueError:
+        raise
+    except Exception as e:  # the plugin's bug: a 500 that names it, not a bare traceback
+        from .plugins import registry
+
+        owner = registry().owner_of("sources", sid)
+        raise PluginError(
+            f"source {sid!r} (plugin '{owner}') failed: {type(e).__name__}: {e}"
+        ) from e
+
+
+def resolve_site(a) -> LaunchSite:
+    """The launch site a request names: `site=<catalog name>` (an unknown name
+    is an error), or `lat`/`lon` for a custom site (`site` then labels it),
+    or the default site when neither is given."""
+    name = a.get("site") or ""
+    lat = opt_float(a, "lat")
+    if lat is not None:
+        return LaunchSite(name or "custom", lat, opt_float(a, "lon", 0.0))
+    if not name:
+        name = DEFAULT_SITE
+    site = SITES.get(name)
+    if site is None:
+        raise ValueError(f"unknown launch site {name!r}; pass lat/lon or one of {list(SITES)}")
+    return site
+
+
 def orbit_from_args(a) -> tuple[Orbit, dict]:
     """Orbit from the web UI's query args: a core source (site: hp/ha/inc/epoch/
     site|lat,lon/leg/pofs; preset: the same shape plus node_lon/argp) or a
@@ -46,18 +111,18 @@ def orbit_from_args(a) -> tuple[Orbit, dict]:
         sp = _plugin_source(sid)
         if sp["kind"] != "orbit":
             raise ValueError(f"source {sid!r} gives a finished trajectory, not an orbit")
-        orb, meta = sp["fn"](a)
+        orb, meta = _call_plugin(sid, sp, a)
         return orb, {"source": sid, "kind": "orbit", **meta}
-    hp = float(a.get("hp", a.get("alt", 400.0)))
-    ha = float(a["ha"]) if a.get("ha") not in (None, "") else hp
-    pofs = float(a.get("pofs", 0.0))
-    inc = float(a.get("inc", 51.6))
+    hp = opt_float(a, "hp", opt_float(a, "alt", 400.0))
+    ha = opt_float(a, "ha", hp)
+    pofs = req_float(a, "pofs", 0.0)
+    inc = req_float(a, "inc", 51.6)
     epoch = parse_epoch(a.get("epoch"))
     if sid == "preset":
         # No launch site: anchored by ascending-node (or GEO station) longitude.
-        node_lon = float(a.get("node_lon", 0.0))
+        node_lon = req_float(a, "node_lon", 0.0)
         orb = Orbit.from_elements(
-            hp, ha, inc, epoch, node_lon_deg=node_lon, argp_deg=float(a.get("argp", 0.0))
+            hp, ha, inc, epoch, node_lon_deg=node_lon, argp_deg=req_float(a, "argp", 0.0)
         )
         return orb, {
             "source": "preset",
@@ -69,14 +134,7 @@ def orbit_from_args(a) -> tuple[Orbit, dict]:
             "node_lon_deg": node_lon,
         }
     ascending = a.get("leg", "ascending") != "descending"
-    site_name = a.get("site", "")
-    sites = dict(SITES)
-    if site_name and site_name in sites:
-        site = sites[site_name]
-    elif "lat" in a:
-        site = LaunchSite("custom", float(a["lat"]), float(a.get("lon", 0.0)))
-    else:
-        site = sites[DEFAULT_SITE]
+    site = resolve_site(a)
     orb = Orbit.from_launch_site(
         site,
         inc_deg=inc,
@@ -104,13 +162,24 @@ def track_from_args(a):
     if sid not in CORE_SOURCES:
         sp = _plugin_source(sid)
         if sp["kind"] == "trajectory":
-            gt, meta = sp["fn"](a)
+            gt, meta = _call_plugin(sid, sp, a)
             return None, {"source": sid, "kind": "trajectory", **meta}, gt
     orb, meta = orbit_from_args(a)
-    hours = float(a.get("hours", 24.0))
-    dt = float(a.get("dt", 30.0))
-    mode = a.get("mode", "kepler")
-    beta = float(a["beta"]) if a.get("beta") else None
+    hours = req_float(a, "hours", 24.0)
+    dt = opt_float(a, "dt")
+    if dt is None:
+        dt = default_dt(hours)
+    if hours < 0:
+        raise ValueError("hours must not be negative")
+    if dt <= 0:
+        raise ValueError("dt must be positive")
+    if hours * 3600.0 / dt > MAX_TRACK_POINTS:
+        raise ValueError(
+            f"hours={hours:g} at dt={dt:g} s is {hours * 3600 / dt:,.0f} samples; "
+            f"the limit is {MAX_TRACK_POINTS:,} — raise dt or shorten the horizon"
+        )
+    mode = a.get("mode") or "kepler"
+    beta = opt_float(a, "beta")
     gt = orb.ground_track(hours * 3600.0, dt, mode=mode, beta=beta)
     return orb, meta, gt
 
@@ -145,42 +214,42 @@ def plan_payload(orb, meta, gt) -> dict:
 
 
 def orbit_from_params(
-    site: str,
-    lat: float | None,
-    lon: float | None,
-    alt_km: float,
-    inc_deg: float,
-    epoch_utc: str | None,
-    ascending: bool,
+    site: str = DEFAULT_SITE,
+    lat: float | None = None,
+    lon: float | None = None,
+    alt_km: float = 400.0,
+    inc_deg: float = 51.6,
+    epoch_utc: str | None = None,
+    ascending: bool = True,
     perigee_km: float | None = None,
     apogee_km: float | None = None,
     perigee_offset_deg: float = 0.0,
     node_lon_deg: float | None = None,
     argp_deg: float = 0.0,
 ) -> tuple[Orbit, LaunchSite | None]:
-    """Orbit from MCP-tool style keyword parameters (see mcp_server.plan_orbit)."""
-    epoch = parse_epoch(epoch_utc)
+    """Orbit from MCP-tool style keyword parameters (see mcp_server.plan_orbit).
+
+    `site=""` with no `lat` means an element-anchored orbit (no launch site,
+    RAAN from `node_lon_deg`); the LaunchSite is then None.  Everything else
+    is the same reading as `orbit_from_args`.
+    """
+    hp = perigee_km if perigee_km is not None else alt_km
+    args = {
+        "hp": hp,
+        "ha": apogee_km if apogee_km is not None else hp,
+        "inc": inc_deg,
+        "epoch": epoch_utc,
+        "leg": "ascending" if ascending else "descending",
+        "pofs": perigee_offset_deg,
+    }
     if not site and lat is None:
-        # Element-anchored (no launch site): RAAN from node/station longitude.
-        hp = perigee_km if perigee_km is not None else alt_km
-        ha = apogee_km if apogee_km is not None else hp
-        return Orbit.from_elements(
-            hp, ha, inc_deg, epoch, node_lon_deg=node_lon_deg or 0.0, argp_deg=argp_deg
-        ), None
-    sites = dict(SITES)
-    if site in sites:
-        ls = sites[site]
-    elif lat is not None:
-        ls = LaunchSite(site or "custom", lat, lon or 0.0)
+        args.update(source="preset", node_lon=node_lon_deg or 0.0, argp=argp_deg)
     else:
-        raise ValueError(f"unknown site {site!r}; pass lat/lon or one of {list(sites)}")
-    return Orbit.from_launch_site(
-        ls,
-        alt_km,
-        inc_deg,
-        epoch,
-        ascending=ascending,
-        perigee_km=perigee_km,
-        apogee_km=apogee_km,
-        perigee_offset_deg=perigee_offset_deg,
-    ), ls
+        args.update(source="site", site=site)
+        if lat is not None:
+            args.update(lat=lat, lon=lon if lon is not None else 0.0)
+    orb, meta = orbit_from_args(args)
+    ls = None
+    if meta["site_lat"] is not None:
+        ls = LaunchSite(meta["site"], meta["site_lat"], meta["site_lon"])
+    return orb, ls
