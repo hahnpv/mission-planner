@@ -14,6 +14,11 @@ Endpoints
                                     source=site|preset|<plugin source>; site=<name> or
                                     lat&lon; hp&ha (or alt) &inc&epoch&leg&pofs for a site,
                                     node_lon&argp for a preset; hours&dt&mode&beta
+  POST /api/uploads                 multipart `file`: store a file for a source that reads
+                                    one (uploads.py); -> {id, name, size}, pass upload=<id>
+  /api/uploads?ext=.h5,.hdf5        stored uploads (newest first), optionally by extension
+  /api/uploads/<id>                 {id, name, size, uploaded_utc} of a stored upload
+  DELETE /api/uploads/<id>          remove it; -> its last {id, name, ...}
   POST /api/plan_job?<plan args>    same, as a background job (for slow plugin modes)
   /api/plan_job/<id>                poll it; done -> same payload as /api/plan
   /api/modules                      built-ins + plugins: status, switches, what each adds
@@ -42,7 +47,7 @@ import traceback
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
-from . import catalog, jobs
+from . import catalog, jobs, uploads
 from .planning import plan_from_args, source_of
 from .plugins import CORE_MODES, CORE_SOURCES, registry
 from .scene import Scene
@@ -84,6 +89,7 @@ def create_app() -> Flask:
     marks its plugin failed."""
     app = Flask(__name__, static_folder=os.path.join(HERE, "static"))
     app.extensions["mp_scene"] = scenes = SceneStore()
+    app.config["MAX_CONTENT_LENGTH"] = uploads.MAX_UPLOAD_BYTES
 
     # Plugins: every loaded built-in/plugin gets its routes registered up front
     # (flask can't add or remove blueprints once serving); the registry's live
@@ -212,6 +218,27 @@ def create_app() -> Flask:
         if d is None:
             abort(404)
         return send_from_directory(d, filename)
+
+    @app.route("/api/uploads", methods=["POST"])
+    def upload():
+        f = request.files.get("file")
+        if f is None:
+            return jsonify({"error": "no file: send multipart form data with a 'file' field"}), 400
+        return jsonify(uploads.put_stream(f.stream, f.filename or ""))
+
+    @app.route("/api/uploads")
+    def upload_list():
+        exts = [e.strip() for e in request.args.get("ext", "").split(",") if e.strip()]
+        return jsonify(uploads.list_uploads(exts))
+
+    @app.route("/api/uploads/<uid>", methods=["GET", "DELETE"])
+    def upload_info(uid):
+        try:
+            if request.method == "DELETE":
+                return jsonify(uploads.delete(uid))
+            return jsonify(uploads.info(uid))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
 
     @app.route("/api/plan")
     def plan():

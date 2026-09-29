@@ -66,7 +66,7 @@ Everything else is optional keys on that dict. The rules that never change:
   `available` key below is for a missing external tool).
 - **Import only the public core surface**: `mission_planner.planning`,
   `jobs`, `orbit` (`Orbit`, `wrap_pi`, the element helpers), `groundtrack`,
-  `timebase`, `constants`, `catalog`, `scene`. Never `server`, `mcp_server`,
+  `timebase`, `constants`, `catalog`, `scene`, `uploads`. Never `server`, `mcp_server`,
   or a `_`-prefixed name. If you need something the core does not expose,
   add a generic hook to the core rather than reaching in.
 - **Reusable math belongs in a library, the plugin is the skin.** A route,
@@ -179,7 +179,9 @@ MP.register({
 });
 ```
 
-`html` is the panel body; give element ids a short prefix (`as_`) so panels
+`html` is the panel body (leave it empty for a plugin with no panel of its
+own, say one that only adds a source: no box is shown, and `isOpen()`
+follows the plugin's switch); give element ids a short prefix (`as_`) so panels
 never collide. Everything the panel needs from the core comes through the
 `ctx` object passed to `init` — never reach for `MP._*` or the core's DOM
 directly, because hooks registered through `ctx` are what go inert when the
@@ -203,6 +205,7 @@ plugin is switched off.
 | `addDisplayToggle(label, checked, cb)` | a checkbox row in the View menu's layers section; returns the `<input>` holding the state |
 | `addMenuItem(menu, item)` | an item in a menu-bar menu (created if new); item types in `static/ui/menubar.js` |
 | `addSource(spec)` / `updateSource()` | a trajectory source's UI half (section 3.5) |
+| `filePicker(opts)` | a file input over the server's upload store (section 3.5); returns `{el, value, info, select(id), refresh()}` |
 
 Panels, menu items, display toggles and every hook above are hidden or
 skipped while the plugin is inactive, and while the current plan is of a
@@ -353,6 +356,37 @@ The id must exist on both sides, and cannot be `site` or `preset`. A
 `"trajectory"` source has no orbit, so modules that need one (`works_with`
 `["orbit"]`, the default) go inert while it is showing, and
 `orbit_from_args` raises for it.
+
+**Sources that read a file.** A file can't ride in a query string, so it
+goes into the server's upload store once and the args carry its id
+(`upload=<id>`). The id is a prefix of the content's SHA-256, so a plan's
+args stay reproducible and the same file never gets stored twice. The UI
+half is `ctx.filePicker(opts)`, the core's file input. It lists the files
+already stored (filtered by extension), uploads a new one from *browse…* or
+a drop, deletes the chosen one from the server with its ✕ button (after a
+confirm), and calls `onChange(info)` with `{id, name, size, uploaded_utc}` or
+`null`:
+
+```js
+const picker = ctx.filePicker({ accept: ".csv", placeholder: "choose a track…",
+                                onChange: () => ctx.updateSource() });
+ctx.addSource({
+  id: "csv", label: "CSV track", html: `<div id="csv_pick"></div>`,
+  init(panel) { panel.querySelector("#csv_pick").appendChild(picker.el); },
+  ready: () => !!picker.value,
+  args(q) { q.set("upload", picker.value); },
+});
+```
+
+On the Python side, `mission_planner.uploads.path(a.get("upload"))` is the
+file on disk (a ValueError, so a 400, for a bad or unknown id) and
+`uploads.info(id)["name"]` its original name. An MCP tool that takes a local
+path can call `uploads.put_file(path)` and hand back the id, so the UI can
+open the same file. The store is `MP_UPLOAD_DIR`, else
+`~/.cache/mission-planner/uploads`. Routes: `POST /api/uploads` (multipart
+`file`), `GET /api/uploads?ext=.csv`, `GET` / `DELETE /api/uploads/<id>`
+(`uploads.delete(id)` from Python). A deleted file's id stops resolving; the
+same content uploaded again gets the same id back.
 
 ### 3.6 Data packs — `catalog`
 

@@ -20,3 +20,11 @@ def core_reg(monkeypatch):
 def core_client(core_reg):
     """A test client for the web app over `core_reg`."""
     return server.create_app().test_client()
+
+
+@pytest.fixture(autouse=True)
+def upload_dir(tmp_path, monkeypatch):
+    """Every test gets its own upload store, never the user's cache."""
+    d = tmp_path / "uploads"
+    monkeypatch.setenv("MP_UPLOAD_DIR", str(d))
+    return d

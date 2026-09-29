@@ -44,12 +44,16 @@ API; the core must never import from it.
   kind `trajectory` returns a finished GroundTrack. Modules declare `works_with` (default
   `["orbit"]`) and go inert in the UI on plans of another kind; `orbit_from_args` raises
   ValueError for a trajectory source.
+- File input is generic: `uploads.py` is a content-addressed store (`MP_UPLOAD_DIR`, default
+  `~/.cache/mission-planner/uploads`; tests get a tmp one via an autouse fixture), plans carry
+  `upload=<id>`, and the UI's picker is `static/ui/files.js` (`ctx.filePicker` for plugins).
+  Reuse it for anything that reads a file; don't add per-feature upload code.
 - Request reading lives in `planning.py` only: `orbit_from_args` / `track_from_args` for query
   args, `orbit_from_params` (MCP keywords) delegates to them. Bad input is a ValueError; the web
   app's error handler turns it into a JSON 400, anything else into a JSON 500. Point count is
   capped (`MAX_TRACK_POINTS`); `default_dt` picks the step for a horizon.
 - Plugins import only the public core surface: `planning`, `jobs`, `orbit` (`Orbit`, `wrap_pi`,
-  `kepler_E` & co.), constants, groundtrack, timebase, catalog, scene. Keep those stable; treat
+  `kepler_E` & co.), constants, groundtrack, timebase, catalog, scene, uploads. Keep those stable; treat
   `_`-prefixed names as private.
 - A plugin that fails to import, whose spec is invalid, or whose requirement is missing never
   raises — it shows in the UI's Plugins menu with the reason; `create_app()` never raises for a
@@ -57,7 +61,7 @@ API; the core must never import from it.
   core's DOM) so they go inert with their plugin. Map-drawing modules gate on `ctx.isOpen()`;
   `marker()` keys must be stable across redraws.
 - Frontend: `static/index.html` is markup only; the code is plain scripts in `static/ui/`
-  (state → projection → sun → map → timeline → form → menus → plugins), sharing one global
+  (state → projection → sun → map → timeline → form → menus → files → plugins), sharing one global
   scope — not ES modules, because module scripts rely on `MP` and `document.currentScript`.
 - State that used to be module globals lives on the app: `SceneStore` on
   `app.extensions["mp_scene"]` (SSE waits on its condition, with heartbeats); jobs in a `JobStore`

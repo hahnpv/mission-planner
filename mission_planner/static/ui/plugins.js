@@ -25,13 +25,15 @@ const MP = {
     const name = document.currentScript?.dataset.module ?? mod.title;
     const rec = (MP.mods[name] ??= { name, title: mod.title, status: "loaded",
                                       enabled: true, active: true });
-    // Collapsible box, closed by default unless the module says open.
+    // Collapsible box, closed by default unless the module says open.  No
+    // html, no box (a source-only plugin): it stays detached and counts as
+    // open, so isOpen() follows the plugin's switch alone.
     const box = document.createElement("details");
     box.className = "modbox";
-    if (mod.open) box.open = true;
+    if (mod.open || !mod.html) box.open = true;
     box.hidden = !MP.on(name);
-    box.innerHTML = `<summary class="lbl">${mod.title}</summary>` + mod.html;
-    $("modulebox").appendChild(box);
+    box.innerHTML = `<summary class="lbl">${mod.title}</summary>` + (mod.html || "");
+    if (mod.html) $("modulebox").appendChild(box);
     rec.box = box;
     const hook = (list, drawsOnMap) => fn => {
       list.push({ mod: name, fn });
@@ -95,6 +97,9 @@ const MP = {
           renderSources();
         },
         updateSource: () => showSource(),
+        // A file input over the server's upload store: see static/ui/files.js.
+        // Put picker.el in your panel and send picker.value as upload=<id>.
+        filePicker: opts => filePicker(opts),
       });
     } catch (e) {
       console.error(`plugin ${name} init:`, e);
