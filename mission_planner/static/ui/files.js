@@ -9,7 +9,10 @@
 // upload id, as a request arg (upload=<id>).
 //
 //   opts: {accept: ".h5,.hdf5", placeholder: "choose a file…",
-//          onChange(info | null)}   info = {id, name, size, uploaded_utc}
+//          onChange(info | null)}   info = {id, name, size, uploaded_utc,
+//                                           kind, kind_label, kind_note}
+// Each file is labelled with its kind: the plugin file reader that claims it
+// (filekinds.py), or "unrecognised".
 //   returns {el, value, info, select(id) (async), refresh()}
 function fmtBytes(n) {
   if (n < 1024) return n + " B";
@@ -43,7 +46,9 @@ function filePicker(opts = {}) {
   };
   function render(keep) {
     sel.innerHTML = `<option value="">${escHtml(opts.placeholder || "choose a file…")}</option>`
-      + list.map(x => `<option value="${x.id}">${escHtml(x.name)} · ${fmtBytes(x.size)}`
+      + list.map(x => `<option value="${x.id}">${escHtml(x.name)}`
+        + ("kind" in x ? ` · ${escHtml(x.kind_label || "unrecognised")}` : "")
+        + ` · ${fmtBytes(x.size)}`
         + (x.uploaded_utc ? ` · ${x.uploaded_utc.slice(0, 10)}` : "") + "</option>").join("");
     sel.value = list.some(x => x.id === keep) ? keep : "";
     del.disabled = !sel.value;

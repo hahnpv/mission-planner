@@ -47,7 +47,10 @@ API; the core must never import from it.
 - File input is generic: `uploads.py` is a content-addressed store (`MP_UPLOAD_DIR`, default
   `~/.cache/mission-planner/uploads`; tests get a tmp one via an autouse fixture), plans carry
   `upload=<id>`, and the UI's picker is `static/ui/files.js` (`ctx.filePicker` for plugins).
-  Reuse it for anything that reads a file; don't add per-feature upload code.
+  File *formats* come from plugins' `file_readers` (detect / inspect / read); `filekinds.py`
+  routes a file to the one reader that claims it (cached per upload), and the built-in
+  `modules/files.py` is the single "File" source with a panel drawn from `inspect()`. A new
+  format is a reader, not a new source; don't add per-feature upload code.
 - Request reading lives in `planning.py` only: `orbit_from_args` / `track_from_args` for query
   args, `orbit_from_params` (MCP keywords) delegates to them. Bad input is a ValueError; the web
   app's error handler turns it into a JSON 400, anything else into a JSON 500. Point count is

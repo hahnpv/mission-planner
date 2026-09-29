@@ -19,5 +19,6 @@ through the draw context (`d.polyline`, `d.polygon`, `d.marker`,
 `ctx` go inert automatically while their plugin is inactive.
 
 Modules here: passes (overflight windows), maneuvers (impulsive budgets),
-decay (the drag-decay readout panel).
+decay (the drag-decay readout panel), files (the "File" trajectory source
+over plugins' file readers).
 """

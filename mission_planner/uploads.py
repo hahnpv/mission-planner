@@ -103,6 +103,14 @@ def info(uid) -> dict:
         return {"id": uid, "name": uid, "size": p.stat().st_size, "uploaded_utc": None}
 
 
+def update_info(uid, **fields) -> dict:
+    """Merge `fields` into upload `uid`'s sidecar (e.g. what kind of file it
+    is, filekinds.py); returns the updated `info`."""
+    item = {**info(uid), **fields}
+    path(uid).with_name(f"{uid}.json").write_text(json.dumps(item))
+    return item
+
+
 def delete(uid) -> dict:
     """Remove upload `uid` (bytes and sidecar); returns its last `info`.
     ValueError when there's no such upload."""

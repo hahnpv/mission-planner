@@ -4,9 +4,9 @@ A plugin is an installed Python package that hands the core a **spec**: a
 dict describing what it adds. The core discovers specs through an entry
 point, loads them once at start-up, and wires each capability into the
 right surface: REST routes into the web server, a JavaScript asset into the
-side panel and map, functions into the MCP server, propagation modes and
-trajectory sources into planning, and a catalog directory into the sites /
-presets / overlays lists.
+side panel and map, functions into the MCP server, propagation modes,
+trajectory sources and file formats into planning, and a catalog directory
+into the sites / presets / overlays lists.
 
 Built-in features (`mission_planner/modules/`) use exactly the same contract,
 so every pattern below has a working example in the core:
@@ -17,6 +17,7 @@ so every pattern below has a working example in the core:
 | pure math + REST route + MCP tool | `modules/maneuvers.py`, `static/modules/maneuvers.js` |
 | UI-only panel reacting to plans | `modules/decay.py`, `static/modules/decay.js` |
 | propagators, sources, data packs, `requires`, `available` | the fake plugins in `tests/test_plugins.py` |
+| a file format (`file_readers`) | the toy reader in `tests/test_filekinds.py` |
 
 The reference for spec keys is the docstring of `mission_planner/plugins.py`;
 this guide is the tutorial.
@@ -205,11 +206,11 @@ plugin is switched off.
 | `addDisplayToggle(label, checked, cb)` | a checkbox row in the View menu's layers section; returns the `<input>` holding the state |
 | `addMenuItem(menu, item)` | an item in a menu-bar menu (created if new); item types in `static/ui/menubar.js` |
 | `addSource(spec)` / `updateSource()` | a trajectory source's UI half (section 3.5) |
-| `filePicker(opts)` | a file input over the server's upload store (section 3.5); returns `{el, value, info, select(id), refresh()}` |
+| `filePicker(opts)` | a file input over the server's upload store (section 3.6); returns `{el, value, info, select(id), refresh()}` |
 
 Panels, menu items, display toggles and every hook above are hidden or
 skipped while the plugin is inactive, and while the current plan is of a
-kind the plugin does not `works_with` (section 3.7).
+kind the plugin does not `works_with` (section 3.8).
 
 **Map layers.** `onDraw` / `onDrawOver` callbacks run on every redraw (every
 drag frame), so keep them cheap and gate them on `ctx.isOpen()`: a closed
@@ -357,38 +358,71 @@ The id must exist on both sides, and cannot be `site` or `preset`. A
 `["orbit"]`, the default) go inert while it is showing, and
 `orbit_from_args` raises for it.
 
-**Sources that read a file.** A file can't ride in a query string, so it
-goes into the server's upload store once and the args carry its id
-(`upload=<id>`). The id is a prefix of the content's SHA-256, so a plan's
-args stay reproducible and the same file never gets stored twice. The UI
-half is `ctx.filePicker(opts)`, the core's file input. It lists the files
-already stored (filtered by extension), uploads a new one from *browse…* or
-a drop, deletes the chosen one from the server with its ✕ button (after a
-confirm), and calls `onChange(info)` with `{id, name, size, uploaded_utc}` or
-`null`:
+A source whose input is **a file** doesn't need `sources` at all: give a
+file reader (section 3.6) and the core's File source does the rest.
 
-```js
-const picker = ctx.filePicker({ accept: ".csv", placeholder: "choose a track…",
-                                onChange: () => ctx.updateSource() });
-ctx.addSource({
-  id: "csv", label: "CSV track", html: `<div id="csv_pick"></div>`,
-  init(panel) { panel.querySelector("#csv_pick").appendChild(picker.el); },
-  ready: () => !!picker.value,
-  args(q) { q.set("upload", picker.value); },
-});
+### 3.6 File formats — `file_readers`
+
+The core has one "File" source (built-in `modules/files.py`): the user picks
+or uploads a file, the core asks every active plugin's file readers which one
+recognises it, and that reader describes it for the panel and turns it into a
+finished trajectory. A new format is a few Python functions — no UI code, no
+routes:
+
+```python
+def detect(path) -> bool:
+    """Is this mine?  Cheap: a header or attributes, not the data."""
+    with open(path, "rb") as f:
+        return f.read(9) == b"#my-track"
+
+def inspect(path) -> dict:
+    """What the File source panel shows before anything is planned."""
+    return {
+        "summary": "vehicle A · 12.5 min, 750 samples",   # one line
+        "warning": None,              # or a sentence shown in red
+        "epoch_utc": "2026-01-01T00:00:00+00:00",   # what a blank epoch means
+        "epoch_note": "the file's header epoch",
+        "options": [{"key": "vehicle", "label": "vehicle",
+                     "choices": ["A", "B"], "default": "A"}],   # a choice of one is hidden
+    }
+
+def read(path, args):
+    """(GroundTrack, meta) — args are the request's: epoch, your option keys."""
+    ...
+    return gt, {"title": "vehicle A"}
+
+MODULE = {..., "file_readers": {"mytrack": {
+    "label": "my track",  "extensions": [".txt"],
+    "detect": detect, "inspect": inspect, "read": read}}}
 ```
 
-On the Python side, `mission_planner.uploads.path(a.get("upload"))` is the
-file on disk (a ValueError, so a 400, for a bad or unknown id) and
-`uploads.info(id)["name"]` its original name. An MCP tool that takes a local
-path can call `uploads.put_file(path)` and hand back the id, so the UI can
-open the same file. The store is `MP_UPLOAD_DIR`, else
-`~/.cache/mission-planner/uploads`. Routes: `POST /api/uploads` (multipart
-`file`), `GET /api/uploads?ext=.csv`, `GET` / `DELETE /api/uploads/<id>`
-(`uploads.delete(id)` from Python). A deleted file's id stops resolving; the
-same content uploaded again gets the same id back.
+- **Detection** runs once per upload and is cached with the file (re-run
+  when the set of active readers changes). Exactly one reader must claim a
+  file: none shows it as *unrecognised*, two is reported as a conflict — so
+  detect on something distinctive (a format tag, a magic header), never on
+  the extension alone. A `detect` that raises counts as "no".
+- **The panel** is drawn from `inspect()`: the summary under the file's kind,
+  the warning, one dropdown per option, and the epoch field with
+  "blank: {epoch_note}, {epoch_utc}". `read` gets `upload`, `epoch` (only if
+  typed) and each option key in `args`.
+- **The plan's summary** is your `meta` plus `file`, `reader` and
+  `reader_label`; a module that should react only to your files checks
+  `plan.summary.reader`.
+- `ValueError` from `inspect`/`read` is the user's problem (a 400 with your
+  message); anything else is reported as your plugin's failure.
+- The core MCP tool `load_file(path, epoch_utc, options)` stores a local file
+  and reads it through the same reader.
 
-### 3.6 Data packs — `catalog`
+Library side, for anything else that takes a file: `mission_planner.uploads`
+is the store (`path(id)`, `info(id)`, `put_file(path)`; content-addressed, so
+the same file keeps its id), and `mission_planner.filekinds` answers
+`detect(id)` / `inspect(id)` / `read(id, args)`. In the UI, `ctx.filePicker`
+is the file input: stored files labelled with their kind, *browse…*, drop,
+and ✕ to delete from the server. Routes: `POST /api/uploads` (multipart
+`file`), `GET /api/uploads?ext=.h5`, `GET` / `DELETE /api/uploads/<id>`,
+`GET /api/files/<id>/inspect`.
+
+### 3.7 Data packs — `catalog`
 
 A directory with any of `sites.yaml`, `presets.yaml` and
 `overlays/<id>.geojson` + `overlays/<id>.yaml` (formats in
@@ -406,7 +440,7 @@ Ship the directory in the wheel (`package-data`). The catalog is cached on
 file modification times, so editing a YAML while the server runs is picked
 up on the next request.
 
-### 3.7 Dependencies and preconditions — `requires`, `available`, `works_with`
+### 3.8 Dependencies and preconditions — `requires`, `available`, `works_with`
 
 - `requires: ["sim"]` — this plugin imports from, or only makes sense with,
   plugin `sim`. Declare it for every plugin you import from: the registry

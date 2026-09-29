@@ -40,13 +40,25 @@ A spec is a dict (conventionally `MODULE`); every key but `name` is optional::
                         query args (`source=<id>` plus whatever its UI sends); meta
                         joins the plan summary; a "slow" trajectory source runs as
                         a background job in the UI.  The UI half is ctx.addSource.
+    file_readers {id: {"label": str, "extensions": [str],
+                       "detect": fn(path) -> bool,
+                       "inspect": fn(path) -> dict,
+                       "read": fn(path, args) -> (GroundTrack, meta dict)}}
+                        file formats a plan can come from (the built-in "File"
+                        source, modules/files.py; library side filekinds.py).
+                        `detect` answers "is this mine?" cheaply (headers, not
+                        data) and is run once per upload; `inspect` feeds the
+                        source panel (summary, warning, epoch default, option
+                        choices: see docs/plugins.md); `read` makes the plan,
+                        `args` being the request's query args
     works_with   [kind] trajectory kinds the module's UI and routes make sense for
                         (default ["orbit"]); against any other plan it goes inert
                         in the UI as if switched off
 
 Every key is type-checked at load; a bad spec makes the plugin **failed**
 with the reason, never a crash.  Names that must be unique across the core
-and every plugin — mode ids, source ids, blueprint names and MCP tool names —
+and every plugin — mode ids, source ids, file reader ids, blueprint names and
+MCP tool names —
 are checked in load order: a later plugin that reuses one fails, naming the
 earlier owner.
 
@@ -183,6 +195,24 @@ def _spec_error(spec) -> str | None:
             return f"source '{sid}' needs a callable 'fn'"
         if sp.get("kind") not in KINDS:
             return f"source '{sid}' kind must be one of {'/'.join(KINDS)}"
+    readers = spec.get("file_readers", {})
+    if not isinstance(readers, dict):
+        return "'file_readers' must be a dict of id -> reader spec"
+    for rid, rp in readers.items():
+        if not isinstance(rid, str) or not rid:
+            return f"file reader id {rid!r} must be a non-empty string"
+        if not isinstance(rp, dict):
+            return f"file reader '{rid}' must be a dict"
+        for fn in ("detect", "inspect", "read"):
+            if not callable(rp.get(fn)):
+                return f"file reader '{rid}' needs a callable '{fn}'"
+        if not isinstance(rp.get("label", ""), str):
+            return f"file reader '{rid}' label must be a string"
+        exts = rp.get("extensions", [])
+        if not isinstance(exts, (list, tuple)) or not all(
+            isinstance(e, str) and e.startswith(".") for e in exts
+        ):
+            return f"file reader '{rid}' extensions must be a list like ['.h5']"
     return None
 
 
@@ -235,6 +265,7 @@ class Registry:
                 continue
             claims = [("mode", m) for m in r.get("propagators") or {}]
             claims += [("source", s) for s in r.get("sources") or {}]
+            claims += [("file reader", f) for f in r.get("file_readers") or {}]
             claims += [("MCP tool", fn.__name__) for fn in r.get("mcp_tools", [])]
             if r.get("blueprint") is not None:
                 claims.append(("blueprint", r.get("blueprint").name))
@@ -342,6 +373,18 @@ class Registry:
     def source(self, sid: str) -> dict:
         """The spec for a plugin-provided trajectory source, if its plugin is active."""
         return self._provided("sources", sid, "source", CORE_SOURCES)
+
+    def file_readers(self) -> dict[str, dict]:
+        """{reader id: spec} of every active plugin's file readers, in load order."""
+        return {
+            rid: rp
+            for r in self.active_records()
+            for rid, rp in (r.get("file_readers") or {}).items()
+        }
+
+    def file_reader(self, rid: str) -> dict:
+        """The spec for file reader `rid`, if its plugin is active."""
+        return self._provided("file_readers", rid, "file reader", ())
 
     def owner_of(self, key: str, item: str) -> str | None:
         """Name of the plugin providing `item` under spec key `key`, if any."""
