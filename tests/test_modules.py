@@ -2,7 +2,7 @@
 
 from mission_planner.plugins import CORE_MCP_TOOLS
 
-BUILTINS = ("passes", "maneuvers", "decay", "files", "groundstation", "sso")
+BUILTINS = ("passes", "maneuvers", "decay", "files", "sso")
 
 
 def test_builtins_are_loaded_and_always_active(core_reg):

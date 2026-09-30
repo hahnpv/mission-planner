@@ -1,0 +1,30 @@
+# mission-planner's own install already ships this plugin (see the core
+# pyproject.toml); this file is the template for packaging a plugin of your own.
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mission-planner-groundstation"
+version = "0.1.0"
+description = "Ground station plugin for mission-planner: elevation mask, contact windows, coverage"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Hahn Aero" }]
+dependencies = ["mission-planner", "numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "flask>=3.0"]
+
+# The line that makes this a mission-planner plugin: an entry point in the
+# `mission_planner.plugins` group, named like the spec's `name`.
+[project.entry-points."mission_planner.plugins"]
+groundstation = "mp_groundstation:MODULE"
+
+[tool.setuptools.packages.find]
+include = ["mp_groundstation*"]
+
+[tool.setuptools.package-data]
+mp_groundstation = ["static/*"]

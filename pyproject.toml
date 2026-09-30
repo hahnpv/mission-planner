@@ -28,10 +28,17 @@ mcp = ["mcp>=1.0"]
 dev = ["pytest>=8.0", "flask>=3.0", "mcp>=1.0", "ruff>=0.5"]
 docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5"]  # the site: mkdocs serve / build (MkDocs 2 drops the theme)
 
+# The core wheel also ships the public example plugin (examples/groundstation),
+# so a core install comes with it; plugins arrive through the entry-point group.
+[project.entry-points."mission_planner.plugins"]
+groundstation = "mp_groundstation:MODULE"
+
 [tool.setuptools.packages.find]
-include = ["mission_planner*"]
+where = [".", "examples/groundstation"]
+include = ["mission_planner*", "mp_groundstation*"]
 
 [tool.setuptools.package-data]
 # Everything the web UI serves and the catalog reads: recursive, so a new
 # static/ui/*.js or data-pack file can't be left out of a wheel.
 mission_planner = ["data/**/*", "static/**/*"]
+mp_groundstation = ["static/*"]

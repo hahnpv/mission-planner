@@ -55,9 +55,13 @@ handles).  The **View** menu switches between a flat **map** (drag sideways to
 scroll endlessly), a **globe** (the map projected on a sphere; drag to rotate)
 and an **orbit** view (the orbit drawn in space around the earth, scaled to
 fit — most telling for high orbits), and toggles the horizon footprint at the
-playback position, day/night shading, and each map overlay.  Built in:
+playback position, day/night shading, and each map overlay.  **Camera** buttons
+at the bottom of the side panel aim the globe and orbit views: down on a pole,
+face-on or edge-on to the orbit, straight down on the vehicle, from the sun —
+optionally following playback.  Built in:
 **target passes** (click the map for overflight windows; *subpoint proximity*,
-not line of sight — the horizon footprint answers that), **maneuvers**
+not line of sight — the horizon footprint and the ground-station plugin's
+elevation mask answer that), **maneuvers**
 (Hohmann, plane change, phasing, deorbit-to-interface budgets) and the
 **drag decay** readout (altitude sparkline, entry / impact).  Zero external
 assets; the frontend is `static/index.html` over `static/ui/*.js`.
@@ -88,9 +92,11 @@ example = "my_plugins.example:MODULE"
 
 The spec can add REST routes (a flask blueprint), a UI panel and map layers,
 MCP tools, propagation modes, trajectory sources, and a data-pack catalog,
-and can **require** other plugins.  **The authoring guide is
-[docs/plugins.md](docs/plugins.md)**; the key reference is the docstring of
-`mission_planner/plugins.py`.  Built-in features use the same contract from
+and can **require** other plugins.  **Start with the
+[tutorial](https://hahnpv.github.io/mission-planner/tutorial/)**, which builds
+the ground-station plugin in `examples/groundstation/` step by step; the
+authoring guide is [docs/plugins.md](docs/plugins.md) and the key reference is
+the docstring of `mission_planner/plugins.py`.  Built-in features use the same contract from
 `mission_planner/modules/`.
 
 The **Plugins** menu lists every installed plugin with what it adds, its

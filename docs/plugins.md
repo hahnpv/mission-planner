@@ -18,9 +18,11 @@ so every pattern below has a working example in the core:
 | UI-only panel reacting to plans | `modules/decay.py`, `static/modules/decay.js` |
 | propagators, sources, data packs, `requires`, `available` | the fake plugins in `tests/test_plugins.py` |
 | a file format (`file_readers`) | the toy reader in `tests/test_filekinds.py` |
+| a complete plugin: math, REST route, MCP tool, panel, map layers, menu toggle, tests | `examples/groundstation/` — built step by step in the [tutorial](tutorial.md) |
 
 The reference for spec keys is the docstring of `mission_planner/plugins.py`;
-this guide is the tutorial.
+this guide explains each of them. New to plugins? Start with the
+[tutorial](tutorial.md), which builds a whole one.
 
 ## 1. The minimum
 
@@ -202,7 +204,7 @@ plugin is switched off.
 | `onPlan(cb)` | `cb(plan)` after every new plan, whenever the focus moves to another track, and once when the plugin is switched on while a plan is showing |
 | `onDraw(fn)` / `onDrawOver(fn)` | map layers under / over the ground track; `fn(d)` gets the draw context below |
 | `onClick(fn)` | `fn(lat, lon)` for a click on the map or globe |
-| `footprintFilter(fn)` | `fn(track, k)` → `true` / `false` / `null`: whether a vehicle (at sample `k`, the playback time) shows its horizon footprint. While any live filter answers non-null, the map draws the footprint of every track that passes them all, instead of the View menu's single footprint of the track in focus (example: `modules/groundstation.py`) |
+| `footprintFilter(fn)` | `fn(track, k)` → `true` / `false` / `null`: whether a vehicle (at sample `k`, the playback time) shows its horizon footprint. While any live filter answers non-null, the map draws the footprint of every track that passes them all, instead of the View menu's single footprint of the track in focus (example: the ground-station plugin, `examples/groundstation/`) |
 | `seek(t_s)` | move playback to seconds past the plan epoch |
 | `onPreset(cb)` | `cb(record, name)` whenever the orbit preset in play changes, with the preset's catalog record (so a module can claim presets by a key of its own, e.g. `sun_synchronous`); `cb(null, null)` when none is (none chosen, or another source) |
 | `onShapeChange(cb)` | `cb(shape)` when perigee, apogee or epoch change |

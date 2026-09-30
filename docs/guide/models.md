@@ -90,8 +90,11 @@ solar day.
   (great circle on the sphere) of a target. It is geometry, not line of
   sight: it ignores altitude, terrain and elevation masks.
 - The **horizon footprint** is the ground from which the vehicle is above the
-  horizon (0° elevation) on the spherical Earth; the ground station uses the
-  same geometry.
+  horizon (0° elevation) on the spherical Earth. The ground-station plugin
+  uses the same geometry with an **elevation mask**: from the central angle
+  $\psi$ between station and subpoint and the vehicle's radius $r$, the
+  elevation is $\operatorname{atan2}(\cos\psi - R_E/r,\ \sin\psi)$; the
+  station sits on the sphere (no station altitude, terrain or refraction).
 - Distances between samples are not interpolated: a pass is found at the
   track's sample spacing (30 s by default), so a very short graze of a small
   circle can fall between samples.

@@ -18,8 +18,8 @@ and see all of it on a local map that both people and AI agents can drive.
   King-Hele drag decay down to the 100 km entry interface. Plugins add
   higher-fidelity propagators as extra modes.
 - **Ask questions of it** — overflight windows of a target, the horizon
-  footprint, Hohmann / plane-change / phasing / deorbit Δv, the
-  ground station's view.
+  footprint, Hohmann / plane-change / phasing / deorbit Δv, and — with the
+  ground-station plugin — contact windows above an elevation mask.
 - **See it** — a flat map that scrolls endlessly, a globe, and a 3-D orbit
   view in the inertial or Earth-fixed frame, with playback and a display
   window.
@@ -42,7 +42,7 @@ and see all of it on a local map that both people and AI agents can drive.
 | connect an AI agent | [Agents — MCP and REST](guide/agents.md) |
 | add launch sites, presets or map overlays | [Catalog data](guide/catalog.md) |
 | know what the physics does and doesn't model | [Models and assumptions](guide/models.md) |
-| add a capability of your own | [Plugin guide](plugins.md) |
+| add a capability of your own | [Tutorial: a ground-station plugin](tutorial.md), then the [Plugin guide](plugins.md) |
 
 ## At a glance
 

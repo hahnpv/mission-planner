@@ -74,6 +74,26 @@ The **View** menu switches the projection:
 
 Double-click resets the zoom in every view.
 
+### Camera views
+
+The **camera** buttons at the bottom of the side panel aim the globe and
+orbit views along a direction that means something. From the flat map they
+switch to the orbit view.
+
+| view | looks |
+|---|---|
+| **N pole** / **S pole** | down on a pole |
+| **face-on** | square to the orbit plane of the track in focus — the orbit's true shape, the Earth at a focus |
+| **edge-on** | in the orbit plane, along the line of nodes — the plane as a line tilted by the inclination |
+| **vehicle** | straight down on the vehicle (on the flat map: centres the map on it) |
+| **sun** | from the sun — the day side |
+
+With **follow** ticked, the view stays aimed as playback runs: the orbit
+plane turns under the Earth's axes, and the vehicle view becomes a chase
+camera. Dragging the map lets go of the view.
+
+![Face-on to a Molniya orbit](../assets/ui-camera-face.png)
+
 ![The orbit view: a Molniya orbit](../assets/ui-orbit.png)
 
 The **layers** section of the View menu toggles:
@@ -128,11 +148,23 @@ The panels under the form are modules. They draw on the map only while open.
 :   After a plan in a drag mode: an altitude-vs-time sparkline, and the entry
     interface crossing (and impact, for modes that fly to the ground).
 
+### The ground-station plugin
+
+The ground station is a plugin that ships with mission-planner in
+`examples/groundstation/` and is installed with it; it is
+also the worked example of the [plugin tutorial](../tutorial.md).
+
 **Ground station**
 :   Place a station (**place on map**, then click; Esc cancels) or type its
-    coordinates. The panel lists which vehicles see it now, and a View-menu
-    toggle limits the horizon footprints to exactly those vehicles. The
-    station is remembered in this browser.
+    coordinates, and set an **elevation mask** (10° by default). The panel
+    says which vehicles are above the mask now, sums up the coverage (number
+    of contacts, time in contact, longest gap) and lists the contact windows
+    — AOS, duration, maximum elevation, azimuth from AOS to LOS; click one to
+    jump there. The map shows the station and a dashed ring: while the
+    vehicle's subpoint is inside it, the vehicle is above the mask. A
+    View-menu toggle limits the horizon footprints to the vehicles above the
+    mask. The station is remembered in this browser; agents get the same
+    answers from the `ground_contacts` MCP tool.
 
 ## Menus
 

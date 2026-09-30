@@ -21,7 +21,6 @@ through the draw context (`d.polyline`, `d.polygon`, `d.marker`,
 
 Modules here: passes (overflight windows), maneuvers (impulsive budgets),
 decay (the drag-decay readout panel), files (the "File" trajectory source
-over plugins' file readers), groundstation (a station on the map, and
-footprints limited to the vehicles that see it), sso (sun-synchronous
+over plugins' file readers), sso (sun-synchronous
 presets: inclination from altitude, node from LTAN, repeat-track variants).
 """

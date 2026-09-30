@@ -42,9 +42,16 @@ API; the core must never import from it.
 - Plugin API: `plugins.py` (spec keys, validation, uniqueness of mode/source/blueprint/tool ids,
   dependency chains: `requires`, `available()`, statuses loaded / failed / unavailable, live
   switches). The authoring guide is `docs/plugins.md` — keep it in step with any API change.
-  Built-in features (`modules/passes.py`, `maneuvers.py`, `decay.py`, `files.py`,
-  `groundstation.py`) use the same spec and are always active; plugins arrive via the
-  `mission_planner.plugins` entry-point group.
+  Built-in features (`modules/passes.py`, `maneuvers.py`, `decay.py`, `files.py`, `sso.py`)
+  use the same spec and are always active; plugins arrive via the `mission_planner.plugins`
+  entry-point group.
+- `examples/groundstation/` is a real, public plugin (station, elevation mask, contact windows,
+  coverage; REST + MCP `ground_contacts`) and the worked example of `docs/tutorial.md`. It is
+  packaged like a standalone plugin (its own `pyproject.toml`, the tutorial's template) but
+  shipped in the core wheel: the core `pyproject.toml` maps `mp_groundstation` from
+  `examples/groundstation/` and registers its entry point, so don't install it separately; its
+  tests run in the core suite by loading the spec straight into a `Registry`. Keep the
+  tutorial's code excerpts in step with it.
 - New core capability → a built-in module; anything private or optional → a plugin. Don't grow
   `server.py`, `mcp_server.py` or `static/ui/*.js` with feature code — core gets generic hooks
   (propagation modes, trajectory sources, catalog packs, menu items, map layers). Reusable math
@@ -82,7 +89,7 @@ API; the core must never import from it.
   core's DOM) so they go inert with their plugin. Map-drawing modules gate on `ctx.isOpen()`;
   `marker()` keys must be stable across redraws.
 - Frontend: `static/index.html` is markup only; the code is plain scripts in `static/ui/`
-  (state → projection → sun → map → timeline → form → menus → files → plugins), sharing one global
+  (state → projection → sun → map → timeline → camera → form → menus → files → plugins), sharing one global
   scope — not ES modules, because module scripts rely on `MP` and `document.currentScript`.
 - State that used to be module globals lives on the app: `SceneStore` on
   `app.extensions["mp_scene"]` (SSE waits on its condition, with heartbeats); jobs in a `JobStore`

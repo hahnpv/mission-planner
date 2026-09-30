@@ -45,6 +45,7 @@ nav:
       - Catalog data: guide/catalog.md
       - Models and assumptions: guide/models.md
   - Plugins:
+      - "Tutorial: a ground-station plugin": tutorial.md
       - Plugin guide: plugins.md
   - Contributing: contributing.md
 
