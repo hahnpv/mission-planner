@@ -2,8 +2,8 @@
 
 Shared by the web server, the MCP server and plugins, so every surface reads
 an orbit from its parameters the same way: `orbit_from_args` is the one
-reader (query-string style args), and `orbit_from_params` (MCP-tool style
-keywords) builds the same args and delegates to it.  No flask here: plugins
+reader (query-string style args), and `args_from_params` turns MCP-tool style
+keywords into the same args (`orbit_from_params` reads them).  No flask here: plugins
 import it at module scope.
 
 Bad input is a ValueError with a message meant for the user (the servers
@@ -217,7 +217,7 @@ def plan_payload(orb, meta, gt) -> dict:
     return {"summary": {**orb.summary(), **meta}, "track": track}
 
 
-def orbit_from_params(
+def args_from_params(
     site: str = DEFAULT_SITE,
     lat: float | None = None,
     lon: float | None = None,
@@ -230,13 +230,12 @@ def orbit_from_params(
     perigee_offset_deg: float = 0.0,
     node_lon_deg: float | None = None,
     argp_deg: float = 0.0,
-) -> tuple[Orbit, LaunchSite | None]:
-    """Orbit from MCP-tool style keyword parameters (see mcp_server.plan_orbit).
+) -> dict:
+    """MCP-tool style keyword parameters -> the web UI's query args (the
+    orbit part: add hours/dt/mode/beta to plan it).
 
-    `site=""` with no `lat` means an element-anchored orbit (no launch site,
-    RAAN from `node_lon_deg`); the LaunchSite is then None.  Everything else
-    is the same reading as `orbit_from_args`.
-    """
+    `site=""` with no `lat` means an element-anchored orbit (source
+    "preset": no launch site, RAAN from `node_lon_deg`)."""
     hp = perigee_km if perigee_km is not None else alt_km
     args = {
         "hp": hp,
@@ -252,7 +251,14 @@ def orbit_from_params(
         args.update(source="site", site=site)
         if lat is not None:
             args.update(lat=lat, lon=lon if lon is not None else 0.0)
-    orb, meta = orbit_from_args(args)
+    return args
+
+
+def orbit_from_params(*args, **params) -> tuple[Orbit, LaunchSite | None]:
+    """Orbit from MCP-tool style keyword parameters (see `args_from_params`
+    and mcp_server.plan_orbit), read exactly as `orbit_from_args` reads the
+    web UI's; the LaunchSite is None for an element-anchored orbit."""
+    orb, meta = orbit_from_args(args_from_params(*args, **params))
     ls = None
     if meta["site_lat"] is not None:
         ls = LaunchSite(meta["site"], meta["site_lat"], meta["site_lon"])

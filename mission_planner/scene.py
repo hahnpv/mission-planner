@@ -11,6 +11,11 @@ Layer kinds:
     windows  {kind, name, columns[], rows[][]}          rendered as a table
     label    {kind, text, lat, lon, color?}
 
+A scene may also carry a whole plan (`plan`: an /api/plan payload, as
+`planning.plan_payload` makes it).  The UI then shows it as if it had planned
+it itself -- timed tracks with playback, the window, footprints and every
+module -- and the layers annotate it (a target, a table of passes).
+
 Angles are degrees.  Unknown fields are passed through untouched so the
 contract can grow without breaking older servers; `from_json` checks the
 shape of the fields it does know, so a malformed document is a ValueError
@@ -56,10 +61,36 @@ def _check(layer: dict) -> dict:
     return layer
 
 
+def _check_track(tr, what: str) -> None:
+    if not isinstance(tr, dict):
+        raise ValueError(f"scene plan {what} must be an object")
+    cols = [tr.get(k) for k in ("t", "lat", "lon")]
+    if not all(isinstance(c, list) for c in cols):
+        raise ValueError(f"scene plan {what} needs t, lat and lon lists")
+    if not len(cols[0]) == len(cols[1]) == len(cols[2]) >= 2:
+        raise ValueError(f"scene plan {what}: t/lat/lon need two or more samples each, same length")
+
+
+def _check_plan(plan) -> dict:
+    """The shape the UI relies on: a summary, a track, and `tracks` when
+    there are several.  The numbers themselves are the planner's."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("summary"), dict):
+        raise ValueError("scene 'plan' must be an /api/plan payload with a 'summary'")
+    _check_track(plan.get("track"), "track")
+    tracks = plan.get("tracks")
+    if tracks is not None:
+        if not isinstance(tracks, list):
+            raise ValueError("scene plan 'tracks' must be a list")
+        for i, tr in enumerate(tracks):
+            _check_track(tr, f"tracks[{i}]")
+    return plan
+
+
 @dataclass
 class Scene:
     title: str = ""
     layers: list[dict] = field(default_factory=list)
+    plan: dict | None = None  # an /api/plan payload the UI shows as its plan
 
     def add(self, layer: dict) -> Scene:
         self.layers.append(_check(layer))
@@ -96,7 +127,10 @@ class Scene:
         )
 
     def to_json(self) -> dict:
-        return {"title": self.title, "layers": self.layers}
+        out = {"title": self.title, "layers": self.layers}
+        if self.plan is not None:
+            out["plan"] = self.plan
+        return out
 
     @classmethod
     def from_json(cls, doc) -> Scene:
@@ -109,7 +143,8 @@ class Scene:
         layers = doc.get("layers", [])
         if not isinstance(layers, list):
             raise ValueError("scene 'layers' must be a list")
-        s = cls(title=title)
+        plan = doc.get("plan")
+        s = cls(title=title, plan=None if plan is None else _check_plan(plan))
         for layer in layers:
             if not isinstance(layer, dict):
                 raise ValueError("each scene layer must be an object with a 'kind'")

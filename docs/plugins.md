@@ -193,7 +193,7 @@ plugin is switched off.
 | member | what it does |
 |---|---|
 | `api(path)` | `fetch` + JSON; resolves to the body, which has an `error` field on a 4xx/5xx; throws on a network failure or a non-JSON error |
-| `status(msg, isErr?)` | the status line under the plan button |
+| `status(msg, isErr?)` | the status bar: one line along the bottom of the window, shared by the core and every plugin (errors in red) |
 | `redraw()` | redraw the map (call after your layer's data changed) |
 | `getPlan()` | the current `{summary, track, tracks?, primary?}` from `/api/plan`, or `null`; `track` is the track in focus (section 3.9) |
 | `planArgs()` | `URLSearchParams` of the request that produced the current plan (source, shape, epoch, mode, beta, hours, dt) |

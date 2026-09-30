@@ -249,13 +249,25 @@ async function loadModules() {
 }
 
 // ------------------------------------------------------------ scene push (SSE)
+// A scene with a `plan` (scene.py; the show_plan tool) becomes the plan on
+// display, once per scene version: a reconnect re-announces the current
+// version, which must not undo a plan made in the form since.
+let scenePlanVersion = -1;
 function listenScenes() {
   const es = new EventSource("/api/events");
   es.onmessage = async () => {
     try {
       const res = await api("/api/scene");
       if (res.error) throw new Error(res.error);
-      if (res.scene) { scene = res.scene; redraw(); }
+      if (!res.scene) return;
+      scene = res.scene;
+      if (scene.plan && res.version !== scenePlanVersion) {
+        scenePlanVersion = res.version;
+        planSeq++;   // a plan request still in flight must not replace it
+        applyPlan(scene.plan);
+        status(`showing ${scene.title || "a pushed plan"} (from an agent)`);
+      }
+      redraw();
     } catch (e) {
       status("scene update failed: " + e.message, true);
     }

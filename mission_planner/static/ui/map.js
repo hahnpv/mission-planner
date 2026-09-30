@@ -401,8 +401,9 @@ function redraw() {
     catch (e) { console.error("module layer:", e); }
   }
 
-  // agent scene layers
+  // agent scene layers (the legend goes with the scene)
   if (scene) drawScene();
+  else $("legend").style.display = "none";
 
   // limb shading over the land lines, under the pins
   if (projMode !== "map")

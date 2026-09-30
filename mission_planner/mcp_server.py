@@ -20,7 +20,14 @@ import urllib.request
 from mcp.server.fastmcp import FastMCP
 
 from . import catalog
-from .planning import DEFAULT_SITE, default_dt, orbit_from_params
+from .planning import (
+    DEFAULT_SITE,
+    args_from_params,
+    default_dt,
+    orbit_from_params,
+    plan_payload,
+    track_from_args,
+)
 from .plugins import registry
 from .scene import Scene
 
@@ -170,10 +177,11 @@ def show_plan(
     node_lon_deg: float | None = None,
     argp_deg: float = 0.0,
 ) -> dict:
-    """Plan an orbit (same parameters as plan_orbit) and display it
-    graphically in the running map UI; with tgt_lat/tgt_lon the passes over
-    that target are listed too."""
-    orb, ls = orbit_from_params(
+    """Plan an orbit (same parameters as plan_orbit) and show it in the
+    running map UI as its plan: the timed track with playback, the display
+    window and the side panels, as if the user had planned it there.  With
+    tgt_lat/tgt_lon the target is marked and the passes over it listed."""
+    args = args_from_params(
         site=site,
         lat=lat,
         lon=lon,
@@ -187,18 +195,15 @@ def show_plan(
         node_lon_deg=node_lon_deg,
         argp_deg=argp_deg,
     )
-    gt = orb.ground_track(hours * 3600.0, default_dt(hours, 60.0), mode=mode, beta=beta)
-    d = gt.to_json()
-    s = orb.summary()
+    args.update(hours=hours, dt=default_dt(hours, 60.0), mode=mode)
+    if beta is not None:
+        args["beta"] = beta
+    orb, meta, gt = track_from_args(args)
+    plan = plan_payload(orb, meta, gt)
+    s = plan["summary"]
     shape = f"{s['perigee_km']:.0f}x{s['apogee_km']:.0f} km" if orb.e > 1e-4 else f"{alt_km:.0f} km"
-    where = ls.name if ls is not None else f"node {node_lon_deg or 0:.0f}°E"
-    sc = Scene(title=f"{where} · {shape} / {inc_deg:.1f}°")
-    sc.track("ground track", d["lat"], d["lon"], color="#2a78d6")
-    if ls is not None:
-        sc.marker(ls.name, ls.lat_deg, ls.lon_deg, symbol="site", color="#898781")
-    if gt.extra.get("entry"):
-        e = gt.extra["entry"]
-        sc.marker("entry", e["lat_deg"], e["lon_deg"], symbol="target", color="#d03b3b")
+    where = s["site"] if s["site_lat"] is not None else f"node {node_lon_deg or 0:.0f}°E"
+    sc = Scene(title=f"{where} · {shape} / {inc_deg:.1f}°", plan=plan)
     if tgt_lat is not None and tgt_lon is not None:
         sc.marker("target", tgt_lat, tgt_lon, symbol="target", color="#eb6834")
         passes = gt.passes(tgt_lat, tgt_lon)
@@ -208,7 +213,7 @@ def show_plan(
             [[p["ca_utc"][5:16], p["min_dist_km"], p["direction"]] for p in passes[:12]],
         )
     res = _post_scene(sc.to_json())
-    return {"ok": True, "url": UI_URL, "version": res.get("version"), "summary": s}
+    return {"ok": True, "url": UI_URL, "version": res.get("version"), "summary": orb.summary()}
 
 
 def _register_plugin_tools():

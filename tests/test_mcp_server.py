@@ -43,16 +43,22 @@ def test_list_launch_sites_tags_packs():
     assert any(s["name"] == "Cape Canaveral / KSC" and s["pack"] == "core" for s in sites)
 
 
-def test_show_plan_builds_a_scene_for_every_orbit_kind(monkeypatch):
+def test_show_plan_pushes_a_timed_plan_for_every_orbit_kind(monkeypatch, core_client):
     posted = []
     monkeypatch.setattr(ms, "_post_scene", lambda doc: posted.append(doc) or {"version": 1})
     ms.show_plan(
         site="Vandenberg", inc_deg=98.0, epoch_utc=EPOCH, hours=3, tgt_lat=34.7, tgt_lon=-120.6
     )
     ms.show_plan(site="", alt_km=35786.0, inc_deg=0.0, node_lon_deg=-100.0, epoch_utc=EPOCH)
+    # The plan is the UI's own /api/plan answer for the same orbit, times and all.
+    q = "source=site&site=Vandenberg&hp=400&ha=400&inc=98&hours=3&dt=60&epoch=" + EPOCH
+    assert posted[0]["plan"] == core_client.get("/api/plan?" + q).get_json()
+    assert posted[0]["plan"]["track"]["t"][-1] == 3 * 3600
+    # Layers only annotate: the target and its passes.
     kinds = [[layer["kind"] for layer in doc["layers"]] for doc in posted]
-    assert kinds[0] == ["track", "marker", "marker", "windows"]
-    assert kinds[1] == ["track"] and posted[1]["title"].startswith("node -100")
+    assert kinds[0] == ["marker", "windows"]
+    assert kinds[1] == [] and posted[1]["title"].startswith("node -100")
+    assert posted[1]["plan"]["summary"]["source"] == "preset"
 
 
 def test_ui_errors_are_distinguished_from_an_absent_ui(monkeypatch):

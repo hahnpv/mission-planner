@@ -97,6 +97,31 @@ def test_scene_roundtrips_and_versions(core_client):
     assert core_client.get("/api/scene").get_json() == {"version": 2, "scene": doc}
 
 
+TRACK = {"t": [0, 60], "lat": [0, 1], "lon": [0, 1]}
+
+
+@pytest.mark.parametrize(
+    "plan, why",
+    [
+        ([1], "summary"),
+        ({"track": TRACK}, "summary"),
+        ({"summary": {}}, "track"),
+        ({"summary": {}, "track": {**TRACK, "lat": [0]}}, "same length"),
+        ({"summary": {}, "track": TRACK, "tracks": [TRACK, {"t": [0]}]}, "tracks[1]"),
+    ],
+)
+def test_scene_checks_its_plan(core_client, plan, why):
+    r = core_client.post("/api/scene", json={"layers": [], "plan": plan})
+    assert r.status_code == 400 and why in r.get_json()["error"]
+
+
+def test_scene_carries_a_plan(core_client):
+    plan = core_client.get("/api/plan?source=site&hours=1").get_json()
+    doc = {"title": "pushed", "layers": [], "plan": plan}
+    core_client.post("/api/scene", json=doc)
+    assert core_client.get("/api/scene").get_json()["scene"] == doc
+
+
 def test_module_toggle_rejects_non_object_bodies(core_client):
     r = core_client.post("/api/modules/passes", json=[1])
     assert r.status_code == 400 and "enabled" in r.get_json()["error"]

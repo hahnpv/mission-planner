@@ -106,6 +106,9 @@ function applyPlan(res) {
   // Only the plan itself: a job result also carries its bookkeeping
   // (status, elapsed_s), which must not leak into the plan.
   plan = { summary: res.summary, track: res.track, tracks: res.tracks, primary: res.primary };
+  // A scene that came with a plan annotates that plan (its target, passes):
+  // it goes when another plan replaces it.  A plain scene stays.
+  if (scene?.plan && res !== scene.plan) scene = null;
   tCur = 0; pinOpen = null;
   renderTrackPicker();
   const s = plan.summary;

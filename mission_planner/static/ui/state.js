@@ -79,9 +79,12 @@ function planEnd() {
   for (const tr of planTracks()) end = Math.max(end, tr.t[tr.t.length - 1]);
   return end;
 }
+// The status bar (one line along the bottom): every status message, the
+// core's and plugins' (ctx.status).  A long one is cut; its tooltip has it all.
 function status(msg, isErr) {
   $("status").textContent = msg;
   $("status").className = isErr ? "err" : "";
+  $("statusbar").title = msg;
 }
 const escHtml = s => String(s).replace(/[&<>"]/g,
   c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);

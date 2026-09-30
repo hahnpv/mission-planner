@@ -102,12 +102,12 @@ starting switches; MCP tools are fixed when the MCP server starts.
 REST: `GET /api/plan?…` and the modules' routes (`/api/passes`,
 `/api/maneuvers/budget`, …) read the plan from query args; `POST
 /api/plan_job` runs a slow plan in the background; `POST /api/scene` pushes a
-Scene document (tracks / markers / polygons / window tables — see
-`mission_planner/scene.py`) that renders live in the open browser tab via
-SSE.  Every error is JSON `{"error": …}` — 400 for bad input, with a reason.
+Scene document (tracks / markers / polygons / window tables, and optionally a
+whole plan that the tab then shows as its own — see `mission_planner/scene.py`)
+that renders live in the open browser tab via SSE.  Every error is JSON `{"error": …}` — 400 for bad input, with a reason.
 
 MCP: `python -m mission_planner.mcp_server` exposes `plan_orbit`,
-`list_launch_sites`, `show_scene`, `show_plan` (plan + display in one call),
+`list_launch_sites`, `show_scene`, `show_plan` (plans an orbit and shows it in the UI as its plan: timed, with playback),
 the built-in modules' `find_passes` and `maneuver_budget`, plus any active
 plugin's tools.
 

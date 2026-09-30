@@ -81,7 +81,12 @@ button.small { width:auto; padding:2px 8px; font-size:11px; }
 details.modbox { border-top:1px solid var(--grid); margin-top:12px; padding-top:4px; }
 details.modbox summary { cursor:pointer; display:list-item; margin:0 0 3px; }
 details.modbox[open] summary { margin-bottom:6px; }
-#status { color:var(--muted); min-height:1.4em; margin-top:8px; }
+/* the status bar: one line along the bottom, the full text in its tooltip */
+#statusbar {
+  border-top:1px solid var(--grid); background:var(--panel); padding:3px 14px;
+  font-size:12px; min-height:1.9em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+#status { color:var(--muted); }
 #status.err { color:var(--red); font-weight:600; }
 #summary, #elements { border-top:1px solid var(--grid); margin-top:12px; padding-top:6px; }
 #summary:empty { display:none; }

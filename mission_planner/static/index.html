@@ -80,7 +80,6 @@
   </div>
 
   <div id="planrow" style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
-  <div id="status">set parameters, then plan.</div>
 
   <!-- A multi-track plan (constellation, multi-vehicle file): which track is
        in focus.  The others draw faintly; clicking one on the map focuses it. -->
@@ -127,6 +126,10 @@
   </div>
 </div>
 </div>
+
+<!-- One line for every status message, the core's and the plugins'
+     (status() in state.js; ctx.status for plugins). -->
+<div id="statusbar"><span id="status">set parameters, then plan.</span></div>
 
 <!-- Plain scripts in dependency order (not ES modules: module code relies on
      MP, $ and document.currentScript).  state.js holds the shared state. -->
