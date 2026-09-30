@@ -204,6 +204,10 @@ plugin is switched off.
 | `onClick(fn)` | `fn(lat, lon)` for a click on the map or globe |
 | `footprintFilter(fn)` | `fn(track, k)` → `true` / `false` / `null`: whether a vehicle (at sample `k`, the playback time) shows its horizon footprint. While any live filter answers non-null, the map draws the footprint of every track that passes them all, instead of the View menu's single footprint of the track in focus (example: `modules/groundstation.py`) |
 | `seek(t_s)` | move playback to seconds past the plan epoch |
+| `onPreset(cb)` | `cb(record, name)` whenever the orbit preset in play changes, with the preset's catalog record (so a module can claim presets by a key of its own, e.g. `sun_synchronous`); `cb(null, null)` when none is (none chosen, or another source) |
+| `onShapeChange(cb)` | `cb(shape)` when perigee, apogee or epoch change |
+| `getShape()` / `setShape(v)` | the form's orbit shape `{hp, ha, inc, node_lon, epoch, preset}` (`epoch` is the input's `"YYYY-MM-DDTHH:MM"` UTC string); `setShape({hp?, ha?, inc?, node_lon?})` writes through the form's setters. New `hp`/`ha` re-run `onShapeChange` hooks, `inc`/`node_lon` alone don't, so a hook can set them without looping (example: `modules/sso.py`) |
+| `presetControls(html)` | rows of your own under the orbit-preset dropdown; returns the element. The core hides it while the plugin is off; show or hide what's inside (say, only for your presets) yourself |
 | `addDisplayToggle(label, checked, cb)` | a checkbox row in the View menu's layers section; returns the `<input>` holding the state |
 | `addMenuItem(menu, item)` | an item in a menu-bar menu (created if new); item types in `static/ui/menubar.js` |
 | `addSource(spec)` / `updateSource()` | a trajectory source's UI half (section 3.5) |

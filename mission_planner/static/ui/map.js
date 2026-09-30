@@ -1,6 +1,7 @@
 "use strict";
-// The map: redraw() rebuilds the svg from scratch each time (track, markers,
-// module layers, agent scene), plus pan / zoom / click handling.
+// The map: redraw() rebuilds the svg each time (track, markers, module
+// layers, agent scene) over a cached static group (staticLayers), plus pan /
+// zoom / click handling.
 
 // Sample index range [i0, i1] of the track inside the shown window; always
 // i0 <= i1 < t.length, and at least two samples when the track has them.
@@ -172,50 +173,45 @@ const layerCtx = () => ({ plan, tCur, project, polyline, polygon, marker, C,
                           idxAtTime, fpa: fpaDeg,
                           globe: projMode !== "map", view: projMode });
 
-function redraw() {
-  const svg = $("map");
-  svg.innerHTML = "";
-  pinHit = null;
-  svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
-  GR = projMode === "orbit" ? orbitRadius() : GLOBE.R;
-  globeBasis();
-
+// The layers that don't move with time -- globe disc, graticule, coastline,
+// overlays -- into `parent`, at the current projection.
+function drawStatic(parent) {
   // globe disc, with a faint darkening toward the limb for depth
   if (projMode !== "map") {
-    const defs = el("defs", {});
+    const defs = el("defs", {}, parent);
     const g = el("radialGradient", { id:"limbshade", cx:"50%", cy:"50%", r:"50%" }, defs);
     el("stop", { offset:"70%", "stop-color":"#1c2733", "stop-opacity":0 }, g);
     el("stop", { offset:"100%", "stop-color":"#1c2733", "stop-opacity":.09 }, g);
-    el("circle", { cx:GLOBE.cx, cy:GLOBE.cy, r:GR, fill:"#f6f5f2" });
+    el("circle", { cx:GLOBE.cx, cy:GLOBE.cy, r:GR, fill:"#f6f5f2" }, parent);
   }
 
   // graticule
   if (projMode === "map") {
     for (let lon = -180; lon <= 180; lon += 30)
-      el("line", { x1:X(lon), y1:Y(90), x2:X(lon), y2:Y(-90), stroke:C.grid, "stroke-width":.5 });
+      el("line", { x1:X(lon), y1:Y(90), x2:X(lon), y2:Y(-90), stroke:C.grid, "stroke-width":.5 }, parent);
     for (let lat = -60; lat <= 60; lat += 30)
       el("line", { x1:0, y1:Y(lat), x2:360 * S, y2:Y(lat),
-                   stroke:C.grid, "stroke-width": lat ? .5 : 1 });
+                   stroke:C.grid, "stroke-width": lat ? .5 : 1 }, parent);
   } else {
     for (let lon = -180; lon < 180; lon += 30) {
       const pts = [];
       for (let lat = -90; lat <= 90; lat += 3) pts.push([lat, lon]);
-      polyline(pts, { stroke:C.grid, "stroke-width":.5 });
+      polyline(pts, { stroke:C.grid, "stroke-width":.5 }, parent);
     }
     for (let lat = -60; lat <= 60; lat += 30) {
       const pts = [];
       for (let lon = -180; lon <= 180; lon += 3) pts.push([lat, lon]);
-      polyline(pts, { stroke:C.grid, "stroke-width": lat ? .5 : 1 });
+      polyline(pts, { stroke:C.grid, "stroke-width": lat ? .5 : 1 }, parent);
     }
   }
 
   // coastline
   if (coast) for (const f of coast.features)
     polyline(f.geometry.coordinates.map(c => [c[1], c[0]]),
-             { stroke:"#b9b7ae", "stroke-width":.7 });
+             { stroke:"#b9b7ae", "stroke-width":.7 }, parent);
 
   // static overlays (shaded regions, e.g. range/warning areas)
-  for (const ov of overlayList) {
+  if (!overlaysHidden) for (const ov of overlayList) {
     const color = ov.style.color || C.red, op = ov.style.opacity || .16;
     if (overlayOff.has(ov.pack + "/" + ov.id)) continue;
     const rings = [];
@@ -229,8 +225,56 @@ function redraw() {
       polygon(ring.map(c => c[1]), ring.map(c => c[0]), {
         fill: color, "fill-opacity": op, stroke: color,
         "stroke-width": .8, "stroke-opacity": .6, "pointer-events": "none",
-      });
+      }, parent);
   }
+}
+
+// drawStatic() is the expensive part of a redraw (a big overlay pack, the
+// coastline), and playback redraws every frame, so its group is kept and
+// reused while nothing it depends on has changed.  On the flat map the strip
+// is drawn once at some lonC0 and twice side by side; a horizontal pan (lonC
+// changes) is then a shift of that pair, not a rebuild.
+let staticCache = null;   // {key, lonC0, g, shift}
+function staticLayers() {
+  const flat = projMode === "map";
+  const key = [projMode, GR, flat ? "" : lonC + "," + latC, overlaysHidden,
+               [...overlayOff].sort().join("|")].join(";");
+  const c = staticCache;
+  if (!c || c.key !== key || c.coast !== coast || c.overlays !== overlayList) {
+    const g = document.createElementNS(NS, "g"), shift = document.createElementNS(NS, "g");
+    drawStatic(shift);
+    if (flat) {
+      // Copy at +W, and clip to the strip so the far copy never shows in a
+      // letterboxed margin.
+      const copy = shift.cloneNode(true);
+      const inner = document.createElementNS(NS, "g");
+      inner.append(...shift.childNodes);
+      copy.setAttribute("transform", `translate(${360 * S},0)`);
+      shift.append(inner, copy);
+      const defs = el("defs", {}, g), clip = el("clipPath", { id:"staticclip" }, defs);
+      el("rect", { x:0, y:0, width:360 * S, height:180 * S }, clip);
+      g.setAttribute("clip-path", "url(#staticclip)");
+    }
+    g.appendChild(shift);
+    staticCache = { key, coast, overlays: overlayList, lonC0: lonC, g, shift };
+  }
+  const s = staticCache;
+  if (flat) {
+    // A point drawn at x for lonC0 belongs at x + (lonC0 - lonC)*S, mod the strip.
+    const off = (((s.lonC0 - lonC) % 360 + 360) % 360) * S;
+    s.shift.setAttribute("transform", `translate(${off - 360 * S},0)`);
+  }
+  return s.g;
+}
+
+function redraw() {
+  const svg = $("map");
+  svg.innerHTML = "";
+  pinHit = null;
+  svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+  GR = projMode === "orbit" ? orbitRadius() : GLOBE.R;
+  globeBasis();
+  svg.appendChild(staticLayers());
 
   // horizon footprint at the playback position: the ground that can see the
   // vehicle at 0 deg elevation, geocentric radius acos(RE/(RE+h))

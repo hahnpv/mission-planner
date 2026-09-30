@@ -77,8 +77,9 @@ API; the core must never import from it.
 - State that used to be module globals lives on the app: `SceneStore` on
   `app.extensions["mp_scene"]` (SSE waits on its condition, with heartbeats); jobs in a `JobStore`
   (`jobs.start`/`poll` share one). `server.app` is built lazily on first attribute access.
-- The SSO preset family (`ssoInclination`, LTAN → node longitude) still lives in `static/ui/form.js`
-  because it needs form hooks no module has; it's the known remaining piece of feature logic in core.
+- Preset families with rules of their own go in a module over the form hooks (`ctx.onPreset`,
+  `onShapeChange`, `getShape` / `setShape`, `presetControls`): the sun-synchronous one is
+  `modules/sso.py` (inclination from altitude, node from LTAN at the epoch, repeat-track variants).
 
 ## Domain gotchas
 

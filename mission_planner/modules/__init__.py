@@ -12,8 +12,9 @@ authoring guide, docs/plugins.md.  In short: `ctx` carries `api` / `status`
 `onToggle(cb)` for the module's collapsible panel, `onDraw(fn)` /
 `onDrawOver(fn)` for map layers under / over the ground track, `onClick(fn)`
 for map clicks, `addDisplayToggle` / `addMenuItem` for menu rows, `seek(t_s)`
-to move playback, and `addSource` / `updateSource` for a trajectory source's
-UI half.  A module that draws on the map gates on `isOpen()`, draws only
+to move playback, `addSource` / `updateSource` for a trajectory source's
+UI half, and `onPreset` / `onShapeChange` / `getShape` / `setShape` /
+`presetControls` for a preset family with rules of its own.  A module that draws on the map gates on `isOpen()`, draws only
 through the draw context (`d.polyline`, `d.polygon`, `d.marker`,
 `d.project`), and uses stable `marker()` keys; hooks registered through
 `ctx` go inert automatically while their plugin is inactive.
@@ -21,5 +22,6 @@ through the draw context (`d.polyline`, `d.polygon`, `d.marker`,
 Modules here: passes (overflight windows), maneuvers (impulsive budgets),
 decay (the drag-decay readout panel), files (the "File" trajectory source
 over plugins' file readers), groundstation (a station on the map, and
-footprints limited to the vehicles that see it).
+footprints limited to the vehicles that see it), sso (sun-synchronous
+presets: inclination from altitude, node from LTAN, repeat-track variants).
 """

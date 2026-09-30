@@ -5,7 +5,7 @@ package installed.
 """
 
 import textwrap
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from flask import Blueprint, jsonify
@@ -15,6 +15,8 @@ import mission_planner.server as server
 from mission_planner import SITES, Orbit
 from mission_planner.catalog import merged
 from mission_planner.plugins import API_VERSION, CORE_CATALOG, Registry, builtin_sources
+
+EPOCH = datetime(2026, 8, 21, 0, 0, tzinfo=timezone.utc)
 
 
 def src(spec, name=None, builtin=False):
@@ -268,7 +270,7 @@ def _slow_mode(orbit, beta, duration_s, dt_s):
 
 def _orbit_source(a):
     """An orbit source: a circular orbit at the requested altitude."""
-    return Orbit.circular(float(a.get("alt", 500.0)), 45.0), {"title": "fake orbit"}
+    return Orbit.circular(float(a.get("alt", 500.0)), 45.0, epoch=EPOCH), {"title": "fake orbit"}
 
 
 def _track_source(a):
@@ -408,7 +410,7 @@ def test_slow_mode_runs_as_a_plan_job(fake):
 
 
 def test_orbit_ground_track_reaches_plugin_modes(fake):
-    orb = Orbit.circular(400.0, 51.6)
+    orb = Orbit.circular(400.0, 51.6, epoch=EPOCH)
     assert len(orb.ground_track(3600.0, 60.0, mode="slowfake").lat) == 61
 
 

@@ -43,7 +43,7 @@ menubar.add("View", { type:"check", label:"Ground trace", visible: () => projMod
   get: () => orbitView.ground, set: v => setOrbitView("ground", v) });
 menubar.add("View", { type:"head", label:"layers" });
 const setDisplay = (key, on) => { display[key] = on; redraw(); };
-const setOverlay = (key, on) => { on ? overlayOff.delete(key) : overlayOff.add(key); redraw(); };
+const setOverlay = (key, on) => { on ? overlayOff.delete(key) : overlayOff.add(key); saveOverlays(); redraw(); };
 menubar.add("View", { type:"check", label:"Horizon footprint at playback time",
                       title:"green ring = the satellite's visible horizon; anything inside "
                             + "(e.g. a downlink site) can see the vehicle",
@@ -54,9 +54,15 @@ menubar.add("View", { type:"check", label:"Night shading",
 const viewModuleRows = [];
 menubar.add("View", { type:"group", items: () => viewModuleRows.filter(i => i.visible()) });
 menubar.add("View", { type:"group", items: () => overlayList.length
-  ? [{ type:"head", label:"map overlays" }].concat(overlayList.map(ov => {
+  ? [{ type:"head", label:"map overlays" },
+     // The master switch: hides every overlay; the ticks below keep the
+     // selection that comes back when it's off.
+     { type:"check", label:"Hide all overlays",
+       get: () => overlaysHidden, set: v => { overlaysHidden = v; saveOverlays(); redraw(); } },
+    ].concat(overlayList.map(ov => {
       const key = ov.pack + "/" + ov.id;
       return { type:"check", label: ov.name, title: ov.pack, swatch: ov.style.color || C.red,
+               enabled: () => !overlaysHidden,
                get: () => !overlayOff.has(key), set: v => setOverlay(key, v) };
     }))
   : [] });

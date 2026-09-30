@@ -231,21 +231,19 @@ function periSync() {
   $("altv").textContent = $("peri").value;
   // Perigee position only means something for an elliptic orbit off a site.
   $("pofsrow").hidden = !(source === "site" && +$("apo").value > +$("peri").value);
-  ssoSync();
+  shapeChanged();
 }
 $("apo").oninput = periSync;
 periSync();
 
 // ------------------------------------------------------------ orbit presets
 // Element-anchored classics: no launch site; RAAN from node/station longitude.
-let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, sso?, sub?} from /api/presets
+let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, pack?, raw} from /api/presets
 function buildPresets(list) {
   PRESETS = {};
   for (const p of list)
     PRESETS[p.name] = p.file_from ? { file_from: p.file_from, pack: p.pack } : { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
-                        argp: p.argp_deg, node_lon: p.node_lon_deg, pack: p.pack,
-                        sso: !!p.sun_synchronous,
-                        sub: p.sun_synchronous ? () => ssoRepeatOptions() : undefined };
+                        argp: p.argp_deg, node_lon: p.node_lon_deg, pack: p.pack, raw: p };
   const cur = $("preset").value;
   $("preset").innerHTML = "<option value='' disabled hidden>choose an orbit…</option>"
     + list.map(p => `<option>${escHtml(p.name)}</option>`).join("");
@@ -253,66 +251,58 @@ function buildPresets(list) {
   if (cur && PRESETS[cur]) $("preset").value = cur;
   else if (cur) { $("preset").value = ""; $("preset").onchange(); }
 }
-// The sun-synchronous inclination [deg] for a perigee/apogee altitude pair
-// (J2 nodal regression of +0.9856 deg/day), or NaN when none exists.
-const SSO_RATE = 2 * Math.PI / (365.2422 * 86400);   // rad/s, one turn per year
-function ssoInclination(hp, ha) {
-  const a = RE_KM + (hp + ha) / 2;
-  const e = (ha - hp) / (2 * RE_KM + hp + ha);           // (ra-rp)/(ra+rp)
-  const p = a * (1 - e * e);
-  const n = Math.sqrt(MU_KM / (a * a * a));
-  const k = 1.5 * J2 * (RE_KM / p) ** 2 * n;
-  const ci = -SSO_RATE / k;
-  return Math.abs(ci) > 1 ? NaN : Math.acos(ci) / DEG;
-}
-// Repeat-ground-track sun-synchronous family: exactly j revs per solar day.
-// For an SSO the node tracks the mean sun, so the repeat condition is a
-// draconitic period of 86400/j s; iterate a with the J2 rates and the
-// altitude-dependent SSO inclination.
-function ssoRepeatOptions() {
-  const out = [];
-  for (let j = 16; j >= 12; j--) {
-    const T = 86400 / j;
-    let a = Math.cbrt(MU_KM * (T / (2 * Math.PI)) ** 2), inc = 98;
-    for (let it = 0; it < 25; it++) {
-      const h = a - RE_KM;
-      inc = ssoInclination(h, h);
-      if (isNaN(inc)) { a = NaN; break; }
-      const n = Math.sqrt(MU_KM / a ** 3), k = 1.5 * J2 * (RE_KM / a) ** 2 * n;
-      const ci = Math.cos(inc * DEG);
-      const du = n + 0.5 * k * (5 * ci * ci - 1) + 0.5 * k * (3 * ci * ci - 1);
-      a *= Math.cbrt((du * T / (2 * Math.PI)) ** 2);
-    }
-    const h = a - RE_KM;
-    if (h > 150 && h < 2500)
-      out.push({ label: `${j} rev/day — ${h.toFixed(0)} km, ${inc.toFixed(2)}°`,
-                 hp: +h.toFixed(1), ha: +h.toFixed(1) });
+
+// Form hooks for modules (ctx.onPreset / onShapeChange / getShape / setShape,
+// plugins.js): a preset family with its own rules -- e.g. the sun-synchronous
+// one (modules/sso.py), whose inclination follows from the altitude and whose
+// node from the local time -- lives in a module, not here.
+const presetName = () => activePreset ? Object.keys(PRESETS).find(k => PRESETS[k] === activePreset) : null;
+// Every live onPreset hook learns the preset in play: the catalog record and
+// name, or (null, null) when none is (none chosen, or another source).
+function presetChanged() {
+  const name = presetName();
+  for (const fn of MP.live(MP._preset)) {
+    try { fn(name ? activePreset.raw : null, name); }
+    catch (e) { console.error("module preset hook:", e); }
   }
-  return out;
 }
-let subOptions = [];
-$("preset2").onchange = () => {
-  const o = subOptions[+$("preset2").value];
-  if (!o) return;
-  $("peri").value = o.hp; $("alt").value = o.hp;
-  $("apo").value = o.ha > o.hp ? o.ha : "";
-  periSync();
-};
+function shapeChanged() {
+  // The form's first sync runs before plugins.js (MP) and any module loads.
+  if (typeof MP === "undefined") return;
+  for (const fn of MP.live(MP._shape)) {
+    try { fn(getShape()); }
+    catch (e) { console.error("module shape hook:", e); }
+  }
+}
+// The orbit shape as the form holds it; epoch is the input's own string,
+// "YYYY-MM-DDTHH:MM" in UTC ("" when unset).
+function getShape() {
+  const hp = +$("peri").value;
+  return { hp, ha: Math.max(+$("apo").value || hp, hp), inc: +$("inc").value,
+           node_lon: +$("nodelon").value, epoch: $("epoch").value, preset: presetName() };
+}
+// Write shape fields through the form's own setters.  A new perigee/apogee
+// runs the usual sync, which reaches onShapeChange hooks; inc / node_lon alone
+// don't, so a hook may call setShape({inc, node_lon}) without looping.
+function setShape(v) {
+  if (v.inc != null) setInc(v.inc);
+  if (v.node_lon != null) $("nodelon").value = v.node_lon;
+  if (v.hp != null || v.ha != null) {
+    const hp = v.hp ?? +$("peri").value;
+    $("peri").value = hp; $("alt").value = hp;
+    if (v.ha != null) $("apo").value = v.ha > hp ? v.ha : "";
+    periSync();
+  }
+}
 
 $("preset").onchange = () => {
   const name = $("preset").value;
   if (name && PRESETS[name]?.file_from) {   // a file preset: to the File source
-    $("preset").value = activePreset ? Object.keys(PRESETS).find(k => PRESETS[k] === activePreset) : "";
+    $("preset").value = presetName() ?? "";
     return openFilePreset(name, PRESETS[name]);
   }
   activePreset = name ? PRESETS[name] : null;
-  // Optional second-level dropdown (e.g. repeat-track SSO family).
-  subOptions = activePreset && activePreset.sub ? activePreset.sub() : [];
-  $("preset2row").style.display = subOptions.length ? "block" : "none";
-  $("preset2").innerHTML = "<option value=''>custom altitude</option>"
-    + subOptions.map((o, i) => `<option value="${i}">${o.label}</option>`).join("");
   $("nodelonrow").style.display = activePreset ? "block" : "none";
-  $("ltanrow").style.display = activePreset && activePreset.sso ? "block" : "none";
   showSource();
   if (activePreset) {
     $("peri").value = activePreset.hp; $("alt").value = activePreset.hp;
@@ -320,33 +310,11 @@ $("preset").onchange = () => {
     setInc(activePreset.inc);
     $("nodelon").value = activePreset.node_lon ?? 0;
     status(`preset ${name} — adjust if needed, then plan.`);
-    ssoSync();
   }
+  presetChanged();
   periSync();
 };
-
-// Sun-synchronous epoch sync: exact inclination for the current hp/ha, and
-// node longitude from the requested LTAN at the chosen epoch (mean sun; the
-// equation of time adds up to ~16 min that planning can ignore).
-function ssoSync() {
-  if (!activePreset || !activePreset.sso) return;
-  const hp = +$("peri").value, ha = Math.max(+$("apo").value || hp, hp);
-  const inc = ssoInclination(hp, ha);
-  if (isNaN(inc)) {
-    status("no sun-synchronous inclination exists at this altitude", true);
-    return;
-  }
-  setInc(inc.toFixed(2));                // keeps both decimals
-  const shown = $("inc").value;
-  const ep = $("epoch").value;
-  const utcH = ep ? (+ep.slice(11, 13)) + (+ep.slice(14, 16)) / 60 : 12;
-  let lam = ((+$("ltan").value - utcH) * 15 + 540) % 360;
-  $("nodelon").value = ((lam + 360) % 360 - 180).toFixed(1);
-  status(`SSO synced: inc ${shown}° for ${hp}×${ha} km, `
-    + `node ${$("nodelon").value}° for LTAN ${$("ltan").value} h`);
-}
-$("ltan").oninput = ssoSync;
-$("epoch").onchange = ssoSync;
+$("epoch").onchange = shapeChanged;
 $("mode").onchange = () => $("betarow").style.display =
   modeInfo($("mode").value).needs_beta ? "block" : "none";
 $("site").onchange = () => {
@@ -405,6 +373,7 @@ function setSource(id) {
   }
   activePreset = id === "preset" && $("preset").value ? PRESETS[$("preset").value] : null;
   showSource();
+  presetChanged();
   periSync();
   if (id === "site") $("site").onchange();
   status(currentSource().ready() ? "set parameters, then plan." : "choose an orbit.");

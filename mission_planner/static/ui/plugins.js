@@ -13,6 +13,8 @@ const MP = {
   _over: [],       // ... and these on top of it
   _clicks: [],     // module handlers for a click on the map
   _footprint: [],  // module filters: which vehicles' horizon footprints to draw
+  _preset: [],     // module hooks: the orbit preset in play changed
+  _shape: [],      // ... and the orbit shape (perigee / apogee / epoch)
   mods: {},        // name -> /api/modules record, plus the module's UI once registered
   // active: switched on with its requirements met.  on: active AND it works
   // with the kind of trajectory currently planned (spec key works_with);
@@ -85,6 +87,29 @@ const MP = {
         addMenuItem: (menu, item) => menubar.add(menu, Object.assign({}, item, {
           visible: () => MP.on(name) && (!item.visible || item.visible()) })),
         seek: ts => seekTo(ts),
+        // Form hooks for a preset family with rules of its own (example:
+        // modules/sso.py).  onPreset(cb): cb(record, name) with the preset's
+        // catalog record whenever the preset in play changes, cb(null, null)
+        // when none is.  onShapeChange(cb): cb(shape) when perigee, apogee or
+        // epoch change.  getShape() -> {hp, ha, inc, node_lon, epoch, preset};
+        // setShape({hp?, ha?, inc?, node_lon?}) writes through the form's
+        // setters (hp/ha re-run onShapeChange hooks; inc/node_lon don't).
+        onPreset: hook(MP._preset, false),
+        onShapeChange: hook(MP._shape, false),
+        getShape: () => getShape(),
+        setShape: v => setShape(v),
+        // Rows of the module's own under the orbit-preset dropdown; returns
+        // the element.  Hidden while the module is off; within that, showing
+        // them (say, only for its presets) is up to the module.
+        presetControls: html => {
+          const box = document.createElement("div");
+          box.innerHTML = html;
+          box.dataset.module = name;
+          box.hidden = !MP.on(name);
+          $("presetctl").appendChild(box);
+          rec.presetEl = box;
+          return box;
+        },
         // A trajectory source: a button in the sidebar's source row and a
         // panel of its own options.  spec: {id, label, html, init?(panel),
         // ready?(), args?(q), planLabel?}; kind and slow come from the plugin's
@@ -159,7 +184,10 @@ const MP = {
 // Show each module's panel only while it's on (active and suited to the
 // current plan), and bring the menus in line.
 function syncModules() {
-  for (const m of Object.values(MP.mods)) if (m.box) m.box.hidden = !MP.on(m.name);
+  for (const m of Object.values(MP.mods)) {
+    if (m.box) m.box.hidden = !MP.on(m.name);
+    if (m.presetEl) m.presetEl.hidden = !MP.on(m.name);
+  }
   renderPlugins();
 }
 // The Plugins menu (built-ins aren't listed: they're always on).  The rows are

@@ -19,7 +19,21 @@ let latC = 20;                     // globe centre latitude; vertical drag tilts
 let GR = GLOBE.R;                  // earth radius on screen: GLOBE.R, or smaller in orbit view
 let B = null;                      // globe basis: n (centre), e (east), u (up)
 let coast = null, sitesList = [], overlayList = [];   // catalog: core + active data packs
-const overlayOff = new Set();      // "pack/id" of overlays the user switched off
+// Map overlays: "pack/id" of those the user switched off, and the View menu's
+// master switch that hides them all while keeping that selection.  Both kept
+// in this browser (the accessors throw in some private modes).
+const OVERLAY_KEY = "mp.overlays";
+const overlayOff = new Set();
+let overlaysHidden = false;
+try {
+  const saved = JSON.parse(localStorage.getItem(OVERLAY_KEY)) || {};
+  for (const k of saved.off || []) overlayOff.add(k);
+  overlaysHidden = !!saved.hidden;
+} catch {}
+function saveOverlays() {
+  try { localStorage.setItem(OVERLAY_KEY, JSON.stringify({ off: [...overlayOff], hidden: overlaysHidden })); }
+  catch {}
+}
 const display = { horizon: false, night: true };    // core layers, switched from the View menu
 const orbitView = { frame: "eci", ground: true };   // orbit view: frame of the lifted path, ground trace
 let activePreset = null;           // {argp?, node_lon?} when an orbit preset is selected
