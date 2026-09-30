@@ -38,7 +38,7 @@ can't change the result. Every test gets its own upload store.
   JSON 400.
 
 The frontend is plain scripts sharing one global scope, loaded in order by
-`static/index.html` (state → projection → sun → map → timeline → form → menus
+`static/index.html` (state → projection → sun → map → timeline → camera → form → menus
 → files → plugins) — not ES modules.
 
 ## Documentation

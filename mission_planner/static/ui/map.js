@@ -271,6 +271,7 @@ function redraw() {
   const svg = $("map");
   svg.innerHTML = "";
   pinHit = null;
+  cameraBeforeDraw();   // a followed camera view re-aims first (camera.js)
   svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
   GR = projMode === "orbit" ? orbitRadius() : GLOBE.R;
   globeBasis();
@@ -515,7 +516,10 @@ function drawScene() {
     if (!down) return;
     const dx = (ev.clientX - down.ev.clientX) / down.scale;
     const dy = (ev.clientY - down.ev.clientY) / down.scale;
-    if (Math.abs(ev.clientX - down.ev.clientX) + Math.abs(ev.clientY - down.ev.clientY) > 4) moved = true;
+    if (!moved && Math.abs(ev.clientX - down.ev.clientX) + Math.abs(ev.clientY - down.ev.clientY) > 4) {
+      moved = true;
+      cameraReleased();   // a drag lets go of a standard camera view
+    }
     if (!moved) return;
     if (projMode !== "map") {
       // the point under the cursor follows it (about one radian per screen
