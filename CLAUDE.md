@@ -32,8 +32,9 @@ API; the core must never import from it.
 - Plugin API: `plugins.py` (spec keys, validation, uniqueness of mode/source/blueprint/tool ids,
   dependency chains: `requires`, `available()`, statuses loaded / failed / unavailable, live
   switches). The authoring guide is `docs/plugins.md` — keep it in step with any API change.
-  Built-in features (`modules/passes.py`, `maneuvers.py`, `decay.py`) use the same spec and are
-  always active; plugins arrive via the `mission_planner.plugins` entry-point group.
+  Built-in features (`modules/passes.py`, `maneuvers.py`, `decay.py`, `files.py`,
+  `groundstation.py`) use the same spec and are always active; plugins arrive via the
+  `mission_planner.plugins` entry-point group.
 - New core capability → a built-in module; anything private or optional → a plugin. Don't grow
   `server.py`, `mcp_server.py` or `static/ui/*.js` with feature code — core gets generic hooks
   (propagation modes, trajectory sources, catalog packs, menu items, map layers). Reusable math
@@ -51,12 +52,19 @@ API; the core must never import from it.
   routes a file to the one reader that claims it (cached per upload), and the built-in
   `modules/files.py` is the single "File" source with a panel drawn from `inspect()`. A new
   format is a reader, not a new source; don't add per-feature upload code.
+- Multi-track plans: a source/reader may return a list of `GroundTrack`s (`id`, `label`,
+  `parent`); `planning.track_set_payload` adds `tracks` + `primary` and keeps `track` = the
+  primary. In the UI `plan.track` is the focused track (`setFocus`, the track picker, a click
+  on a vehicle); `planTracks()` / `planEnd()` (state.js) span them all, and onPlan hooks rerun
+  on a focus change. A catalog preset may be a file preset (`file_from`: a plugin route that
+  stores a file; the UI opens it in the File source via `openFile`).
 - Request reading lives in `planning.py` only: `orbit_from_args` / `track_from_args` for query
   args, `orbit_from_params` (MCP keywords) delegates to them. Bad input is a ValueError; the web
   app's error handler turns it into a JSON 400, anything else into a JSON 500. Point count is
   capped (`MAX_TRACK_POINTS`); `default_dt` picks the step for a horizon.
 - Plugins import only the public core surface: `planning`, `jobs`, `orbit` (`Orbit`, `wrap_pi`,
-  `kepler_E` & co.), constants, groundtrack, timebase, catalog, scene, uploads. Keep those stable; treat
+  `kepler_E` & co.), constants, groundtrack, timebase, catalog, scene, uploads, filekinds. Keep
+  those stable; treat
   `_`-prefixed names as private.
 - A plugin that fails to import, whose spec is invalid, or whose requirement is missing never
   raises — it shows in the UI's Plugins menu with the reason; `create_app()` never raises for a

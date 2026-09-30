@@ -181,3 +181,65 @@ def test_load_file_mcp_tool(monkeypatch, tmp_path):
     assert out["reader"] == "toy" and out["note"] == "toy" and out["title"] == "toy run"
     assert uploads.info(out["upload"])["name"] == "run.txt"
     assert "decay_profile" not in out
+
+
+# ---------------------------------------------------------------- several tracks
+def _read_two(path, args):
+    t, lat, lon, alt = _rows(path).T
+    e0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    a = GroundTrack(e0, t, np.radians(lat), np.radians(lon), alt, id="a", label="Alpha")
+    # Same samples, an epoch one minute later: shifted onto the first track's clock.
+    b = GroundTrack(
+        e0.replace(minute=1), t, np.radians(lat), np.radians(lon), alt, id="b", label="Bravo"
+    )
+    return [a, b], {"title": "pair", "primary": "b"}
+
+
+def test_a_reader_can_return_several_tracks(monkeypatch, tmp_path):
+    pair = {"api": 1, "name": "toy", "file_readers": {"toy": {**READER, "read": _read_two}}}
+    _, c = _client(monkeypatch, pair)
+    uid = _upload(c)["id"]
+    res = c.get(f"/api/plan?source=file&upload={uid}").get_json()
+    assert res["primary"] == "b" and res["track"]["id"] == "b"
+    assert [(t["id"], t["label"]) for t in res["tracks"]] == [("a", "Alpha"), ("b", "Bravo")]
+    assert res["tracks"][1]["t"] == [60.0, 120.0]  # onto track a's epoch
+    assert res["summary"]["n_tracks"] == 2 and "primary" not in res["summary"]
+
+    from mission_planner.modules.files import load_file
+
+    f = tmp_path / "pair.txt"
+    f.write_bytes(BODY)
+    out = load_file(str(f))
+    assert [t["id"] for t in out["tracks"]] == ["a", "b"]
+    assert out["tracks"][0]["span_s"] == [0.0, 60.0]
+
+
+def test_track_sets_are_checked():
+    from mission_planner.planning import MAX_TRACK_POINTS, track_set_payload
+
+    e0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def tr(tid, n=3):
+        z = np.zeros(n)
+        return GroundTrack(e0, np.arange(float(n)), z, z, z, id=tid)
+
+    with pytest.raises(ValueError, match="share the id"):
+        track_set_payload({}, [tr("x"), tr("x")])
+    with pytest.raises(ValueError, match="primary"):
+        track_set_payload({"primary": "nope"}, [tr("x")])
+    with pytest.raises(ValueError, match="limit"):
+        track_set_payload({}, [tr("x", MAX_TRACK_POINTS), tr("y")])
+    with pytest.raises(ValueError, match="no tracks"):
+        track_set_payload({}, [])
+    # Unnamed tracks get ids.
+    assert [t["id"] for t in track_set_payload({}, [tr(None), tr(None)])["tracks"]] == [
+        "track1",
+        "track2",
+    ]
+
+
+def test_time_must_not_run_backwards():
+    e0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    z = np.zeros(3)
+    with pytest.raises(ValueError, match="runs backwards"):
+        GroundTrack(e0, np.array([0.0, 10.0, 5.0]), z, z, z, label="mix")

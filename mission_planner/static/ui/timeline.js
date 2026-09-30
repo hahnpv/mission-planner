@@ -9,7 +9,7 @@ function updateClock() {
 }
 function setScrubFromSlider() {
   if (!plan) return;
-  const t = plan.track.t, tEnd = t[t.length - 1];
+  const tEnd = planEnd();
   const lo = win[0] * tEnd, hi = win[1] * tEnd;
   tCur = lo + ($("scrub").value / 1000) * (hi - lo);
   updateClock(); redraw();
@@ -21,7 +21,7 @@ function setWindow(w0, w1) {
   $("winfill").style.left = (win[0] * 100) + "%";
   $("winfill").style.width = ((win[1] - win[0]) * 100) + "%";
   if (plan) {
-    const tEnd = plan.track.t[plan.track.t.length - 1];
+    const tEnd = planEnd();
     const span = (win[1] - win[0]) * tEnd;
     $("winlabel").textContent = span >= 86400 ? (span/86400).toFixed(1) + " d"
                               : (span/3600).toFixed(1) + " h";
@@ -33,7 +33,7 @@ $("win0").oninput = () => setWindow($("win0").value/1000, $("win1").value/1000);
 $("win1").oninput = () => setWindow($("win0").value/1000, $("win1").value/1000);
 document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => {
   if (!plan) return;
-  const tEnd = plan.track.t[plan.track.t.length - 1];
+  const tEnd = planEnd();
   if (b.dataset.win === "all") return setWindow(0, 1);
   const span = b.dataset.win === "rev" ? plan.summary.period_s : +b.dataset.win;
   const start = win[0];
@@ -48,7 +48,7 @@ $("play").onclick = () => {
 function tick(now) {
   if (!playing || !plan) return;
   const dt = (now - lastFrame) / 1000; lastFrame = now;
-  const t = plan.track.t, tEnd = t[t.length - 1];
+  const tEnd = planEnd();
   const lo = win[0] * tEnd, hi = win[1] * tEnd;
   tCur += dt * (+$("speed").value);
   if (tCur > hi) tCur = lo;
@@ -60,7 +60,7 @@ function tick(now) {
 // if the instant falls outside it.  Exposed to modules as ctx.seek.
 function seekTo(ts) {
   if (!plan) return;
-  const tEnd = plan.track.t[plan.track.t.length - 1];
+  const tEnd = planEnd();
   tCur = Math.max(0, Math.min(ts, tEnd));
   if (tCur < win[0] * tEnd || tCur > win[1] * tEnd) setWindow(0, 1);
   const lo = win[0] * tEnd, hi = win[1] * tEnd;

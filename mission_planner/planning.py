@@ -192,7 +192,11 @@ def plan_from_args(a) -> dict:
 def plan_payload(orb, meta, gt) -> dict:
     """The /api/plan JSON: summary + track.  For an orbit the summary carries its
     elements and the track its first-rev apsides (if elliptic); a finished
-    trajectory (orb None) has only its source's meta."""
+    trajectory (orb None) has only its source's meta.  A list of tracks (a
+    constellation, a branched run) adds `tracks` and `primary`: see
+    `track_set_payload`."""
+    if isinstance(gt, (list, tuple)):
+        return track_set_payload(meta, list(gt))
     track = gt.to_json()
     if orb is None:
         return {"summary": dict(meta), "track": track}
@@ -253,3 +257,45 @@ def orbit_from_params(
     if meta["site_lat"] is not None:
         ls = LaunchSite(meta["site"], meta["site_lat"], meta["site_lon"])
     return orb, ls
+
+
+def track_set_payload(meta: dict, tracks: list) -> dict:
+    """The /api/plan JSON for several tracks on one clock:
+
+        summary   the source's meta, plus `n_tracks`
+        tracks    every track's JSON with its `id` (and `label`, `parent`);
+                  times are seconds past the FIRST track's epoch, which all
+                  of them share
+        primary   the id of the track the UI focuses first: meta's `primary`
+                  (dropped from the summary), else the first track
+        track     that track again, so single-track readers keep working
+
+    The point limit (MAX_TRACK_POINTS) covers all tracks together."""
+    if not tracks:
+        raise ValueError("the source returned no tracks")
+    total = sum(len(g.t) for g in tracks)
+    if total > MAX_TRACK_POINTS:
+        raise ValueError(
+            f"{len(tracks)} tracks with {total:,} samples in all; the limit is "
+            f"{MAX_TRACK_POINTS:,} — shorten the span or use fewer tracks"
+        )
+    epoch0 = tracks[0].epoch
+    out, seen = [], set()
+    for i, g in enumerate(tracks):
+        d = g.to_json()
+        d["id"] = tid = g.id or f"track{i + 1}"
+        if tid in seen:
+            raise ValueError(f"two tracks share the id {tid!r}")
+        seen.add(tid)
+        shift = (g.epoch - epoch0).total_seconds()
+        if shift:
+            d["t"] = (np.asarray(g.t, dtype=float) + shift).tolist()
+            d["epoch_utc"] = epoch0.isoformat()
+        out.append(d)
+    summary = {k: v for k, v in meta.items() if k != "primary"}
+    primary = meta.get("primary") or out[0]["id"]
+    if primary not in seen:
+        raise ValueError(f"primary track {primary!r} is not among the tracks")
+    summary["n_tracks"] = len(out)
+    track = next(d for d in out if d["id"] == primary)
+    return {"summary": summary, "track": track, "tracks": out, "primary": primary}

@@ -2,7 +2,7 @@
 
 from mission_planner.plugins import CORE_MCP_TOOLS
 
-BUILTINS = ("passes", "maneuvers", "decay")
+BUILTINS = ("passes", "maneuvers", "decay", "files", "groundstation")
 
 
 def test_builtins_are_loaded_and_always_active(core_reg):
@@ -29,8 +29,8 @@ def test_budget_endpoint_rejects_an_impossible_phasing(core_client):
     assert res.status_code == 400 and "lead_deg" in res.get_json()["error"]
 
 
-def test_module_js_served(core_client):
+def test_module_js_served(core_reg, core_client):
     for name in BUILTINS:
-        res = core_client.get(f"/plugins/{name}/{name}.js")
+        res = core_client.get(f"/plugins/{name}/{core_reg.records[name].get('js')}")
         assert res.status_code == 200, name
         assert b"MP.register" in res.data

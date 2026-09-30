@@ -10,7 +10,11 @@ A catalog directory holds any of::
     presets.yaml    - {name, perigee_km, apogee_km?, inc_deg, argp_deg?,
                        node_lon_deg?, sun_synchronous?}
                       element-anchored orbits: no launch site, RAAN from
-                      node (or GEO station) longitude
+                      node (or GEO station) longitude; or a *file preset*
+                      {name, file_from: <POST route>} — the route (a data
+                      pack's plugin provides it) stores a file and answers
+                      with its upload info; the UI opens it in the File
+                      source and plans it (e.g. a constellation's elements)
     overlays/<id>.geojson + overlays/<id>.yaml
                     - shaded map regions; the YAML sidecar carries
                       {title, style: {color, opacity}, source: {...}}

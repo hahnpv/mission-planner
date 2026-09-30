@@ -67,7 +67,7 @@ Everything else is optional keys on that dict. The rules that never change:
   `available` key below is for a missing external tool).
 - **Import only the public core surface**: `mission_planner.planning`,
   `jobs`, `orbit` (`Orbit`, `wrap_pi`, the element helpers), `groundtrack`,
-  `timebase`, `constants`, `catalog`, `scene`, `uploads`. Never `server`, `mcp_server`,
+  `timebase`, `constants`, `catalog`, `scene`, `uploads`, `filekinds`. Never `server`, `mcp_server`,
   or a `_`-prefixed name. If you need something the core does not expose,
   add a generic hook to the core rather than reaching in.
 - **Reusable math belongs in a library, the plugin is the skin.** A route,
@@ -195,18 +195,21 @@ plugin is switched off.
 | `api(path)` | `fetch` + JSON; resolves to the body, which has an `error` field on a 4xx/5xx; throws on a network failure or a non-JSON error |
 | `status(msg, isErr?)` | the status line under the plan button |
 | `redraw()` | redraw the map (call after your layer's data changed) |
-| `getPlan()` | the current `{summary, track}` from `/api/plan`, or `null` |
+| `getPlan()` | the current `{summary, track, tracks?, primary?}` from `/api/plan`, or `null`; `track` is the track in focus (section 3.9) |
 | `planArgs()` | `URLSearchParams` of the request that produced the current plan (source, shape, epoch, mode, beta, hours, dt) |
 | `isOpen()` | the panel is open **and** the plugin is active |
 | `onToggle(cb)` | `cb(open)` when the user opens or closes the panel |
-| `onPlan(cb)` | `cb(plan)` after every new plan (and once when the plugin is switched on while a plan is showing) |
+| `onPlan(cb)` | `cb(plan)` after every new plan, whenever the focus moves to another track, and once when the plugin is switched on while a plan is showing |
 | `onDraw(fn)` / `onDrawOver(fn)` | map layers under / over the ground track; `fn(d)` gets the draw context below |
 | `onClick(fn)` | `fn(lat, lon)` for a click on the map or globe |
+| `footprintFilter(fn)` | `fn(track, k)` → `true` / `false` / `null`: whether a vehicle (at sample `k`, the playback time) shows its horizon footprint. While any live filter answers non-null, the map draws the footprint of every track that passes them all, instead of the View menu's single footprint of the track in focus (example: `modules/groundstation.py`) |
 | `seek(t_s)` | move playback to seconds past the plan epoch |
 | `addDisplayToggle(label, checked, cb)` | a checkbox row in the View menu's layers section; returns the `<input>` holding the state |
 | `addMenuItem(menu, item)` | an item in a menu-bar menu (created if new); item types in `static/ui/menubar.js` |
 | `addSource(spec)` / `updateSource()` | a trajectory source's UI half (section 3.5) |
 | `filePicker(opts)` | a file input over the server's upload store (section 3.6); returns `{el, value, info, select(id), refresh()}` |
+| `openFile(id, {plan?})` | show a stored file (upload id) in the File source; `plan: true` plans it once its reader has described it |
+| `plan()` | plan what the form currently says, as the plan button does |
 
 Panels, menu items, display toggles and every hook above are hidden or
 skipped while the plugin is inactive, and while the current plan is of a
@@ -408,6 +411,9 @@ MODULE = {..., "file_readers": {"mytrack": {
 - **The plan's summary** is your `meta` plus `file`, `reader` and
   `reader_label`; a module that should react only to your files checks
   `plan.summary.reader`.
+- **Several tracks** (a satellite catalog, a multi-vehicle run): `read` may
+  return a list of GroundTracks, each with an `id` and `label` (section
+  3.9); `meta["primary"]` names the one to focus first.
 - `ValueError` from `inspect`/`read` is the user's problem (a 400 with your
   message); anything else is reported as your plugin's failure.
 - The core MCP tool `load_file(path, epoch_utc, options)` stores a local file
@@ -436,6 +442,12 @@ MODULE = {"api": 1, "name": "mysites", "title": "my launch sites",
           "catalog": Path(__file__).parent / "catalog"}
 ```
 
+A preset can also be a **file preset**, `{name, file_from: <POST route>}`:
+the route (your plugin's blueprint) stores a file (`uploads.put_stream`) and
+answers with its upload info; choosing the preset opens that file in the File
+source and plans it. That is how a pack puts, say, a live constellation in
+the orbit preset list only while its plugin is active.
+
 Ship the directory in the wheel (`package-data`). The catalog is cached on
 file modification times, so editing a YAML while the server runs is picked
 up on the next request.
@@ -453,6 +465,28 @@ up on the next request.
 - `works_with: ["orbit", "trajectory"]` — which plan kinds the plugin's UI
   and routes make sense for. Default `["orbit"]`; a pass search that only
   needs a track lists both.
+
+### 3.9 Several tracks in one plan
+
+A plan can hold several vehicles on one clock — a constellation, a
+multi-vehicle simulation, a trajectory that branches. Any trajectory source
+or file reader returns a **list** of `GroundTrack`s instead of one:
+
+```python
+GroundTrack(epoch, t, lat, lon, alt, id="25544", label="ISS (ZARYA)",
+            parent=None)   # parent={"id": ..., "t_s": ...}: where it split off another
+```
+
+Ids must be unique within the plan; `meta["primary"]` picks the first track
+in focus. The payload then carries `tracks` (every track, times on the first
+track's epoch) and `primary`, and still `track` (the primary), so code that
+knows one track keeps working. In the UI, `plan.track` is the track **in
+focus**: panels, markers and modules work on it, the other tracks draw
+faintly with a vehicle dot each, and the focus moves with the track picker
+or a click on a vehicle — your `onPlan` hook runs again when it does. The
+point limit covers all tracks together. A single track's time must never run
+backwards (`GroundTrack` refuses it): several vehicles are several tracks,
+not one.
 
 ## 4. Testing a plugin
 

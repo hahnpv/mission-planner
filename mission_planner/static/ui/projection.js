@@ -63,10 +63,10 @@ function orbitVec(lat, lon, alt_km, t_s) {
 // Hidden only when behind the earth AND inside its disc.
 const occluded = v => dot(v, B.n) < 0 && dot(v, B.e) ** 2 + dot(v, B.u) ** 2 < 1;
 function spacePoint(v) { const [x, y] = onScreen(v); return { x, y, vis: !occluded(v) }; }
-// Earth radius on screen for the orbit view: the track's highest point fits.
+// Earth radius on screen for the orbit view: the highest point of any track fits.
 function orbitRadius() {
   let hi = 0;
-  if (plan) for (const a of plan.track.alt_km) if (a > hi) hi = a;
+  for (const tr of planTracks()) for (const a of tr.alt_km) if (a > hi) hi = a;
   return GLOBE.R / ((1 + Math.max(hi, 600) / RE_KM) * 1.04);
 }
 
@@ -161,10 +161,25 @@ function polygon(latArr, lonArr, attrs, parent, inside) {
     cum += normLon(lonArr[i] - lonArr[i-1]);
     xs.push(cum);
   }
+  // A ring around a pole (a large footprint at high latitude) winds a full
+  // 360 deg of longitude: close it along that pole's edge of the map instead
+  // of straight across it.
+  const lats = latArr.slice();
+  const wound = Math.abs(cum + normLon(lonArr[0] - lonArr[lonArr.length - 1]) - xs[0]) > 180;
+  if (wound) {
+    const pole = lats.reduce((a, b) => a + b, 0) >= 0 ? 90 : -90;
+    const xEnd = xs[xs.length - 1] + normLon(lonArr[0] - lonArr[lonArr.length - 1]);
+    xs.push(xEnd, xEnd, xs[0]);
+    lats.push(latArr[0], pole, pole);
+  }
   for (const off of [-360, 0, 360]) {
     const pts = xs.map((x, i) =>
-      `${((x + off + 180) * S).toFixed(1)},${Y(latArr[i]).toFixed(1)}`);
-    el("polygon", { ...attrs, points: pts.join(" ") }, parent);
+      `${((x + off + 180) * S).toFixed(1)},${Y(lats[i]).toFixed(1)}`);
+    if (!wound) { el("polygon", { ...attrs, points: pts.join(" ") }, parent); continue; }
+    // Fill the closed shape, but stroke only the real ring, not the edges
+    // added along the pole.
+    el("polygon", { ...attrs, stroke: "none", points: pts.join(" ") }, parent);
+    el("polyline", { ...attrs, fill: "none", points: pts.slice(0, latArr.length + 1).join(" ") }, parent);
   }
 }
 function polygonGlobe(vs, attrs, parent, inside) {

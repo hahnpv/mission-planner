@@ -8,7 +8,7 @@ function trackWindowIdx() {
   if (!plan) return [0, 0];
   const t = plan.track.t, n = t.length;
   if (n < 2) return [0, 0];
-  const tEnd = t[n - 1];
+  const tEnd = planEnd();
   const lo = win[0] * tEnd, hi = win[1] * tEnd;
   let i0 = t.findIndex(v => v >= lo); if (i0 < 0) i0 = 0;
   let i1 = n - 1;
@@ -56,6 +56,9 @@ function pinGroup(info, lat, lon, at) {
   g.addEventListener("click", ev => {
     ev.stopPropagation();
     pinOpen = pinOpen === info.key ? null : info.key;
+    // A vehicle of a multi-track plan: clicking it brings it into focus, and
+    // its readout follows it to the focused track's marker.
+    if (info.focus) { setFocus(info.focus); pinOpen = "sat"; }
     redraw();
   });
   if (pinOpen === info.key) pinHit = { info, lat, lon, x:p.x, y:p.y };
@@ -117,8 +120,30 @@ function drawPin(p) {
   }
 }
 
-function drawHorizon() {
-  const tr = plan.track, k = idxAtTime(tCur);
+// Which vehicles show a horizon footprint: the track in focus while the View
+// menu's footprint is on, unless a module's footprint filter (ctx.footprintFilter)
+// has an opinion -- then every track (at the playback time) that passes them all.
+function footprintsToDraw() {
+  const filters = MP.live(MP._footprint), out = [];
+  let opinion = false;
+  for (const tr of planTracks()) {
+    const n = tr.t.length;
+    if (n < 2 || tCur < tr.t[0] || tCur > tr.t[n - 1]) continue;
+    const k = idxAtTime(tCur, tr);
+    let keep = null;
+    for (const f of filters) {
+      let v = null;
+      try { v = f(tr, k); } catch (e) { console.error("footprint filter:", e); }
+      if (v === null || v === undefined) continue;
+      opinion = true;
+      keep = (keep ?? true) && !!v;
+    }
+    if (keep) out.push([tr, k]);
+  }
+  if (opinion) return out;
+  return display.horizon ? [[plan.track, idxAtTime(tCur)]] : [];
+}
+function drawHorizon(tr, k, fill = 0.10) {
   const lat0 = tr.lat[k] * DEG, lon0 = tr.lon[k] * DEG;
   const lam = Math.acos(RE_KM / (RE_KM + Math.max(tr.alt_km[k], 1)));
   const lats = [], lons = [];
@@ -131,7 +156,7 @@ function drawHorizon() {
     lats.push(la / DEG);
     lons.push(normLon(lo / DEG));
   }
-  polygon(lats, lons, { fill: C.green, "fill-opacity": .10, stroke: C.green,
+  polygon(lats, lons, { fill: C.green, "fill-opacity": fill, stroke: C.green,
     "stroke-width": 1.4, "stroke-opacity": .8, "pointer-events": "none" });
 }
 
@@ -209,7 +234,12 @@ function redraw() {
 
   // horizon footprint at the playback position: the ground that can see the
   // vehicle at 0 deg elevation, geocentric radius acos(RE/(RE+h))
-  if (plan && display.horizon) drawHorizon();
+  if (plan) {
+    const fps = footprintsToDraw();
+    // Many overlapping footprints: thinner fill, so the overlap stays readable.
+    const fill = fps.length > 1 ? Math.max(0.025, 0.10 / Math.sqrt(fps.length)) : 0.10;
+    for (const [tr, k] of fps) drawHorizon(tr, k, fill);
+  }
 
   // module map layers, under the ground track
   for (const fn of MP.live(MP._layers)) {
@@ -225,8 +255,10 @@ function redraw() {
                       fill:"#1c2733", opacity:.10, "pointer-events":"none" });
   }
 
-  // ground track (clipped to display window)
+  // ground track (clipped to display window): the other tracks of a
+  // multi-track plan faintly, then the one in focus
   if (plan) {
+    if (plan.tracks) drawOtherTracks();
     const [i0, i1] = trackWindowIdx();
     const tr = plan.track, pts = [], orbit3d = projMode === "orbit";
     for (let i = i0; i <= i1; i++) pts.push([tr.lat[i], tr.lon[i]]);
@@ -273,7 +305,7 @@ function redraw() {
         ps = spacePoint(v);
       }
       marker(tr.lat[k], tr.lon[k], C.blue, "dot", "",
-             { key:"sat", title:"satellite", alt_km: tr.alt_km[k],
+             { key:"sat", title: tr.label || "satellite", alt_km: tr.alt_km[k],
                gamma_deg: fpaDeg(tr, k),
                rows: [["utc", fmtUTC(Date.parse(tr.epoch_utc)
                                      + tr.t[k] * 1000).slice(5)]] }, ps);
@@ -330,6 +362,33 @@ function redraw() {
 
   // the open marker's callout, last so nothing can draw over it
   if (pinHit) drawPin(pinHit);
+}
+
+// The tracks of a multi-track plan other than the one in focus: a faint path
+// within the display window and a dot at the playback time.  Clicking a dot
+// opens its readout and moves the focus to it (setFocus, form.js).
+function drawOtherTracks() {
+  const orbit3d = projMode === "orbit", end = planEnd();
+  const lo = win[0] * end, hi = win[1] * end;
+  for (const tr of plan.tracks) {
+    if (tr === plan.track) continue;
+    const t = tr.t, n = t.length;
+    if (n < 2 || t[n - 1] < lo || t[0] > hi) continue;
+    const pts = [];
+    for (let i = 0; i < n; i++)
+      if (t[i] >= lo && t[i] <= hi)
+        pts.push(orbit3d ? orbitVec(tr.lat[i], tr.lon[i], tr.alt_km[i], t[i]) : [tr.lat[i], tr.lon[i]]);
+    const attrs = { stroke:C.blue, "stroke-width":.7, opacity:.22, "pointer-events":"none" };
+    if (orbit3d) spaceLine(pts, attrs);
+    else polyline(pts, attrs);
+    if (tCur < t[0] || tCur > t[n - 1]) continue;
+    const k = idxAtTime(tCur, tr);
+    const at = orbit3d ? spacePoint(orbitVec(tr.lat[k], tr.lon[k], tr.alt_km[k], t[k])) : null;
+    marker(tr.lat[k], tr.lon[k], "#7ea6d6", "dot", "",
+           { key:"track:" + tr.id, title: tr.label || tr.id, alt_km: tr.alt_km[k], focus: tr.id,
+             rows: [["utc", fmtUTC(Date.parse(tr.epoch_utc) + t[k] * 1000).slice(5)]] },
+           at || undefined);
+  }
 }
 
 const SCENE_COLORS = [C.blue, C.orange, C.green, C.red];

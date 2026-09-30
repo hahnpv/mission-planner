@@ -12,6 +12,7 @@ const MP = {
   _layers: [],     // module map layers, drawn each redraw under the track
   _over: [],       // ... and these on top of it
   _clicks: [],     // module handlers for a click on the map
+  _footprint: [],  // module filters: which vehicles' horizon footprints to draw
   mods: {},        // name -> /api/modules record, plus the module's UI once registered
   // active: switched on with its requirements met.  on: active AND it works
   // with the kind of trajectory currently planned (spec key works_with);
@@ -61,6 +62,12 @@ const MP = {
         // fn(lat, lon) for a click on the map; a module that paints only while
         // its panel is open should gate on isOpen() here too.
         onClick: hook(MP._clicks, true),
+        // fn(track, k) -> true | false | null: should this vehicle (sample k,
+        // the playback time) show its horizon footprint?  null = no opinion.
+        // While any live filter has an opinion, the footprints drawn are every
+        // track's that passes them all, instead of the View menu's single
+        // footprint of the track in focus.
+        footprintFilter: hook(MP._footprint, true),
         // A check item in the View menu's layers section.  Returns a detached
         // checkbox <input> holding the state, so the module can read or set it.
         addDisplayToggle: (label, checked, cb) => {
@@ -97,6 +104,10 @@ const MP = {
           renderSources();
         },
         updateSource: () => showSource(),
+        // Open a stored file (an upload id) in the File source; {plan: true}
+        // plans it once its reader has described it.  plan() plans the form as is.
+        openFile: (id, opts) => openFile(id, opts),
+        plan: () => doPlan(),
         // A file input over the server's upload store: see static/ui/files.js.
         // Put picker.el in your panel and send picker.value as upload=<id>.
         filePicker: opts => filePicker(opts),

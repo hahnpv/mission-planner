@@ -105,7 +105,9 @@ function applyPlan(res) {
   }
   // Only the plan itself: a job result also carries its bookkeeping
   // (status, elapsed_s), which must not leak into the plan.
-  plan = { summary: res.summary, track: res.track }; tCur = 0; pinOpen = null;
+  plan = { summary: res.summary, track: res.track, tracks: res.tracks, primary: res.primary };
+  tCur = 0; pinOpen = null;
+  renderTrackPicker();
   const s = plan.summary;
   const row = r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`;
   // The launch site, when there is one: element-anchored (preset) orbits have none.
@@ -149,6 +151,45 @@ function applyPlan(res) {
   MP.live(MP._onPlan).forEach(cb => cb(plan));
 }
 $("plan").onclick = doPlan;
+
+// ------------------------------------------------------------ multi-track plans
+// A plan with several tracks (plan.tracks, e.g. a constellation) keeps one in
+// focus as plan.track: the panels, markers and modules work on that one; the
+// others draw faintly.  The picker and a click on a vehicle move the focus,
+// and modules hear about it through their onPlan hooks.
+function renderTrackPicker() {
+  $("trackpick").hidden = !plan?.tracks;
+  if (!plan?.tracks) return;
+  $("trackcount").textContent = plan.tracks.length;
+  $("tracksel").replaceChildren(...plan.tracks.map(tr => new Option(tr.label || tr.id, tr.id)));
+  $("tracksel").value = plan.track.id;
+}
+function setFocus(id) {
+  const tr = plan?.tracks?.find(x => x.id === id);
+  if (!tr || tr === plan.track) return;
+  plan.track = tr;
+  $("tracksel").value = id;
+  MP.live(MP._onPlan).forEach(cb => cb(plan));
+  redraw();
+}
+$("tracksel").onchange = () => setFocus($("tracksel").value);
+
+// Open a stored file (uploads.py) in the File source (modules/files.py);
+// with {plan: true} it is planned as soon as its reader has described it.
+function openFile(id, opts = {}) {
+  setSource("file");
+  document.dispatchEvent(new CustomEvent("mp:open-file", { detail: { id, plan: !!opts.plan } }));
+}
+// A catalog preset can be a file a plugin fetches (catalog.py: `file_from`):
+// POST to its route, which stores the file and answers with the upload.
+async function openFilePreset(name, p) {
+  status(`fetching ${name}…`);
+  let res;
+  try { res = await apiPost(p.file_from); }
+  catch (e) { status(`${name}: server unreachable: ${e.message}`, true); return; }
+  if (res.error) { status(`${name}: ${res.error}`, true); return; }
+  openFile(res.id, { plan: true });
+}
 
 // ------------------------------------------------------------ live controls
 const live = [["hours","hoursv"],["pofs","pofsv"]];
@@ -201,7 +242,7 @@ let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, sso?, sub?} from 
 function buildPresets(list) {
   PRESETS = {};
   for (const p of list)
-    PRESETS[p.name] = { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
+    PRESETS[p.name] = p.file_from ? { file_from: p.file_from, pack: p.pack } : { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
                         argp: p.argp_deg, node_lon: p.node_lon_deg, pack: p.pack,
                         sso: !!p.sun_synchronous,
                         sub: p.sun_synchronous ? () => ssoRepeatOptions() : undefined };
@@ -260,6 +301,10 @@ $("preset2").onchange = () => {
 
 $("preset").onchange = () => {
   const name = $("preset").value;
+  if (name && PRESETS[name]?.file_from) {   // a file preset: to the File source
+    $("preset").value = activePreset ? Object.keys(PRESETS).find(k => PRESETS[k] === activePreset) : "";
+    return openFilePreset(name, PRESETS[name]);
+  }
   activePreset = name ? PRESETS[name] : null;
   // Optional second-level dropdown (e.g. repeat-track SSO family).
   subOptions = activePreset && activePreset.sub ? activePreset.sub() : [];

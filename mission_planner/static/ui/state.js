@@ -24,7 +24,8 @@ const display = { horizon: false, night: true };    // core layers, switched fro
 const orbitView = { frame: "eci", ground: true };   // orbit view: frame of the lifted path, ground trace
 let activePreset = null;           // {argp?, node_lon?} when an orbit preset is selected
 let source = "site";               // trajectory source id (see SOURCES in form.js)
-let plan = null;                   // {summary, track} from /api/plan
+let plan = null;                   // {summary, track, tracks?, primary?} from /api/plan;
+                                   // track is the one in focus (setFocus in form.js)
 let scene = null;                  // agent-pushed Scene
 let win = [0, 1];                  // shown span, fraction of track duration
 let tCur = 0;                      // scrub time, seconds past epoch
@@ -54,6 +55,15 @@ async function apiPost(p, body) {
   try { j = await r.json(); } catch {}
   if (!r.ok && !(j && j.error)) throw new Error(`HTTP ${r.status}`);
   return j;
+}
+// Every track of the plan: one for most plans, several for a constellation or
+// a multi-vehicle file.  They share one clock (seconds past the plan epoch).
+const planTracks = () => plan ? (plan.tracks || [plan.track]) : [];
+// The plan's last instant [s past epoch]: the timeline spans 0 .. planEnd().
+function planEnd() {
+  let end = 0;
+  for (const tr of planTracks()) end = Math.max(end, tr.t[tr.t.length - 1]);
+  return end;
 }
 function status(msg, isErr) {
   $("status").textContent = msg;

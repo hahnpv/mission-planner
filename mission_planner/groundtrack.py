@@ -32,6 +32,11 @@ class GroundTrack:
 
     `extra` carries mode-specific payloads that `to_json` merges into the
     track (e.g. `decay_profile`, `entry`, `impact`).
+
+    One track is one vehicle.  A plan may hold several (a constellation, a
+    branched trajectory): sources and readers then return a list, and `id`
+    (unique within the plan), `label` and `parent` ({"id", "t_s"}: where this
+    track split off another) tell them apart.  Time must not run backwards.
     """
 
     epoch: datetime
@@ -40,11 +45,20 @@ class GroundTrack:
     lon: np.ndarray
     alt: np.ndarray
     extra: dict = field(default_factory=dict)
+    id: str | None = None
+    label: str | None = None
+    parent: dict | None = None
 
     def __post_init__(self):
         n = len(self.t)
         if not (len(self.lat) == len(self.lon) == len(self.alt) == n):
             raise ValueError("t, lat, lon and alt must have the same length")
+        if n > 1 and np.any(np.diff(np.asarray(self.t, dtype=float)) < 0):
+            which = f"track {self.label or self.id}" if (self.label or self.id) else "track"
+            raise ValueError(
+                f"{which} runs backwards in time — several vehicles or branches "
+                "merged into one track?"
+            )
 
     @property
     def heading(self) -> np.ndarray:
@@ -114,4 +128,7 @@ class GroundTrack:
             "alt_km": (self.alt * 1e-3).round(3).tolist(),
         }
         d.update(self.extra)
+        for key in ("id", "label", "parent"):
+            if getattr(self, key) is not None:
+                d[key] = getattr(self, key)
         return d

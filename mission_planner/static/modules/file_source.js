@@ -13,6 +13,7 @@ MP.register({
   html: "",   // no side panel; the source brings its own
   init(ctx) {
     let info = null;   // /api/files/<id>/inspect for the chosen file
+    let planWhenReady = null;   // an upload id to plan once described (openFile)
     const $f = id => document.getElementById("fsrc_" + id);
     const picker = ctx.filePicker({
       placeholder: "choose a file…",
@@ -29,6 +30,7 @@ MP.register({
         render(res);
         ctx.updateSource();
         ctx.status(`${res.kind_label} ready — show it.`);
+        if (planWhenReady === f.id) { planWhenReady = null; ctx.plan(); }
       },
     });
     function render(res) {
@@ -57,6 +59,11 @@ MP.register({
         .filter(Boolean).join(", ");
       $f("opts").hidden = false;
     }
+    // openFile (form.js; ctx.openFile for plugins): pick this file here.
+    document.addEventListener("mp:open-file", ev => {
+      planWhenReady = ev.detail.plan ? ev.detail.id : null;
+      picker.select(ev.detail.id);
+    });
     ctx.addSource({
       id: "file", label: "File", planLabel: "show file",
       html: `<div class="lbl">file</div>

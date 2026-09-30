@@ -45,18 +45,35 @@ def load_file(path: str, epoch_utc: str | None = None, options: dict | None = No
     Returns the reader's summary of the run (title, epoch and where it came
     from, duration, altitude, ...), the entry-interface crossing and ground
     impact when there are any, which reader read it (`reader`), and `upload`,
-    the stored file's id.  `epoch_utc` sets the UTC time of the file's t=0;
-    `options` are the reader's own choices (e.g. {"vehicle": "..."}; the
-    reader's inspect lists them).
+    the stored file's id.  A file with several tracks (a satellite catalog, a
+    multi-vehicle run) gives `tracks`: one brief entry per track.
+    `epoch_utc` sets the UTC time of the file's t=0; `options` are the
+    reader's own choices (e.g. {"vehicle": "..."}; the reader's inspect lists
+    them).
     """
     stored = uploads.put_file(path)
     args = {k: str(v) for k, v in (options or {}).items()}
     if epoch_utc:
         args["epoch"] = epoch_utc
     gt, meta = filekinds.read(stored["id"], args)
-    # Small annotations only: the arrays are for the map, not the agent.
-    extra = {k: v for k, v in gt.extra.items() if k != "decay_profile"}
-    return {**meta, **extra, "upload": stored["id"]}
+    if isinstance(gt, (list, tuple)):  # several tracks: one line each
+        return {**meta, "upload": stored["id"], "tracks": [_brief(g) for g in gt]}
+    return {**meta, **_brief(gt), "upload": stored["id"]}
+
+
+def _brief(gt) -> dict:
+    """A track for the agent: its annotations and span, not the arrays."""
+    out = {k: v for k, v in gt.extra.items() if k != "decay_profile"}
+    for key in ("id", "label", "parent"):
+        if getattr(gt, key) is not None:
+            out[key] = getattr(gt, key)
+    if len(gt.t):
+        out["span_s"] = [float(gt.t[0]), float(gt.t[-1])]
+        out["alt_km_range"] = [
+            round(float(gt.alt.min()) * 1e-3, 1),
+            round(float(gt.alt.max()) * 1e-3, 1),
+        ]
+    return out
 
 
 MODULE = {

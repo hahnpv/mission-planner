@@ -89,6 +89,13 @@
   <div id="planrow" style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
   <div id="status">set parameters, then plan.</div>
 
+  <!-- A multi-track plan (constellation, multi-vehicle file): which track is
+       in focus.  The others draw faintly; clicking one on the map focuses it. -->
+  <div id="trackpick" hidden>
+    <div class="lbl">in focus · <span id="trackcount"></span> tracks</div>
+    <select id="tracksel"></select>
+  </div>
+
   <div id="modulebox"></div>
 
   <div id="summary"></div>
