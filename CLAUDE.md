@@ -18,6 +18,16 @@ API; the core must never import from it.
 - Web UI: `python -m mission_planner.server` → http://127.0.0.1:3030 (port hard-coded).
   MCP server: `python -m mission_planner.mcp_server`.
 
+## Documentation site
+
+- `docs/` + `mkdocs.yml` build the public site (MkDocs + Material, `pip install -e ".[docs]"`);
+  `.github/workflows/docs.yml` publishes it to GitHub Pages on every push to main. Check with
+  `mkdocs build --strict` (broken links fail CI). Pages: index, getting-started, guide/
+  (web-ui, library, agents, catalog, models), plugins.md, contributing. Keep them in step with
+  behaviour changes, like `docs/plugins.md` with the plugin API.
+- Screenshots in `docs/assets/` must come from a core-only app (built-ins, no installed plugins
+  or data packs) so nothing private shows.
+
 ## Public / private boundary
 
 - Nothing deployment-specific or proprietary goes in this repo: no private project, client,

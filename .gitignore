@@ -7,3 +7,4 @@ dist/
 *.whl
 .venv/
 .claude/settings.local.json
+site/

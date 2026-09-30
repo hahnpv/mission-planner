@@ -6,6 +6,8 @@ coefficient), search overflights of a target, and display everything on a slick
 local map UI that both humans and AI agents can drive.  Capabilities beyond the
 core attach as **plugins**; sites, presets and map overlays are **data**.
 
+**Documentation: <https://hahnpv.github.io/mission-planner/>**
+
 ## Install
 
 ```bash
