@@ -302,14 +302,15 @@ function redraw() {
   // ground track (clipped to display window): the other tracks of a
   // multi-track plan faintly, then the one in focus
   if (plan) {
-    if (plan.tracks) drawOtherTracks();
+    if (plan.tracks) drawOtherTracks(false);
     const [i0, i1] = trackWindowIdx();
     const tr = plan.track, pts = [], orbit3d = projMode === "orbit";
+    const tc = tr.color || C.blue;   // a track may carry its own colour (a booster branch)
     for (let i = i0; i <= i1; i++) pts.push([tr.lat[i], tr.lon[i]]);
     // In the orbit view the ground track stays on the surface, faint (and
     // optional), and the orbit itself is drawn in space.
     if (!orbit3d || orbitView.ground)
-      polyline(pts, { stroke:C.blue, "stroke-width": orbit3d ? .8 : 1.1,
+      polyline(pts, { stroke:tc, "stroke-width": orbit3d ? .8 : 1.1,
                       opacity: orbit3d ? .25 : .45 });
     // Emphasize the orbit around the playback position: half a rev ahead
     // and behind the satellite dot, clipped to the display window.  A
@@ -322,13 +323,13 @@ function redraw() {
         all.push(v);
         if (Math.abs(tr.t[i] - tCur) <= halfP) rev.push(v);
       }
-      spaceLine(all, { stroke:C.blue, "stroke-width":1.1, opacity:.45 });
-      spaceLine(rev, { stroke:C.blue, "stroke-width":2.2 });
+      spaceLine(all, { stroke:tc, "stroke-width":1.1, opacity:.45 });
+      spaceLine(rev, { stroke:tc, "stroke-width":2.2 });
     } else {
       const rev = [];
       for (let i = i0; i <= i1; i++)
         if (Math.abs(tr.t[i] - tCur) <= halfP) rev.push([tr.lat[i], tr.lon[i]]);
-      polyline(rev, { stroke:C.blue, "stroke-width":2.2 });
+      polyline(rev, { stroke:tc, "stroke-width":2.2 });
     }
 
     // launch site + satellite at scrub time
@@ -345,10 +346,10 @@ function redraw() {
       if (orbit3d) {   // the satellite at altitude, tied to its subpoint
         const v = orbitVec(tr.lat[k], tr.lon[k], tr.alt_km[k], tr.t[k]);
         spaceLine([vec(tr.lat[k], tr.lon[k]), v],
-                  { stroke:C.blue, "stroke-width":.8, opacity:.6, "stroke-dasharray":"2 2" });
+                  { stroke:tc, "stroke-width":.8, opacity:.6, "stroke-dasharray":"2 2" });
         ps = spacePoint(v);
       }
-      marker(tr.lat[k], tr.lon[k], C.blue, "dot", "",
+      marker(tr.lat[k], tr.lon[k], tc, "dot", "",
              { key:"sat", title: tr.label || "satellite", alt_km: tr.alt_km[k],
                gamma_deg: fpaDeg(tr, k),
                rows: [["utc", fmtUTC(Date.parse(tr.epoch_utc)
@@ -356,7 +357,7 @@ function redraw() {
       if (ps.vis) {
         // Near an apsis marker its label sits to the right, so go left.
         const left = apsisAt.some(([, a]) => a.vis && Math.hypot(a.x - ps.x, a.y - ps.y) < 30);
-        el("text", { x: left ? ps.x-8 : ps.x+8, y:ps.y-6, fill:C.blue, "font-size":11,
+        el("text", { x: left ? ps.x-8 : ps.x+8, y:ps.y-6, fill:tc, "font-size":11,
                      "text-anchor": left ? "end" : "start" })
           .textContent = tr.alt_km[k].toFixed(0) + " km";
       }
@@ -371,9 +372,9 @@ function redraw() {
                            rows: [["t+", (ap.t_s / 60).toFixed(1) + " min"]] },
                          ap.lat_deg, ap.lon_deg, at);
       el("circle", { cx:x, cy:y, r:4,
-                     fill: ap.kind === "P" ? C.blue : "#fcfcfb",
-                     stroke: C.blue, "stroke-width":1.6 }, g);
-      el("text", { x:x+7, y:y+4, fill:C.blue, "font-size":11, "font-weight":600 }, g)
+                     fill: ap.kind === "P" ? tc : "#fcfcfb",
+                     stroke: tc, "stroke-width":1.6 }, g);
+      el("text", { x:x+7, y:y+4, fill:tc, "font-size":11, "font-weight":600 }, g)
         .textContent = ap.kind + " " + ap.alt_km.toFixed(0) + " km";
     }
 
@@ -389,6 +390,10 @@ function redraw() {
                             gamma_deg: fpaDeg(tr, idxAtTime(tr.impact.t_s, tr)),
                             rows: [["utc", tr.impact.epoch_utc.replace("T", " ").slice(5, 19) + "Z"]] });
   }
+
+  // Tracks in a colour of their own (a booster branch) over the focused one:
+  // they often run right along it.
+  if (plan?.tracks) drawOtherTracks(true);
 
   // module map layers drawn ON TOP of the track (markers, callouts)
   for (const fn of MP.live(MP._over)) {
@@ -410,25 +415,28 @@ function redraw() {
 
 // The tracks of a multi-track plan other than the one in focus: a faint path
 // within the display window and a dot at the playback time.  Clicking a dot
-// opens its readout and moves the focus to it (setFocus, form.js).
-function drawOtherTracks() {
+// opens its readout and moves the focus to it (setFocus, form.js).  Two
+// passes: `colored` false draws the plain ones, true those with a colour.
+function drawOtherTracks(colored) {
   const orbit3d = projMode === "orbit", end = planEnd();
   const lo = win[0] * end, hi = win[1] * end;
   for (const tr of plan.tracks) {
-    if (tr === plan.track) continue;
+    if (tr === plan.track || !!tr.color !== colored) continue;
     const t = tr.t, n = t.length;
     if (n < 2 || t[n - 1] < lo || t[0] > hi) continue;
     const pts = [];
     for (let i = 0; i < n; i++)
       if (t[i] >= lo && t[i] <= hi)
         pts.push(orbit3d ? orbitVec(tr.lat[i], tr.lon[i], tr.alt_km[i], t[i]) : [tr.lat[i], tr.lon[i]]);
-    const attrs = { stroke:C.blue, "stroke-width":.7, opacity:.22, "pointer-events":"none" };
+    // A track in a colour of its own (a booster branch) stays plainly visible.
+    const attrs = { stroke: tr.color || C.blue, "stroke-width": tr.color ? 1 : .7,
+                    opacity: tr.color ? .65 : .22, "pointer-events":"none" };
     if (orbit3d) spaceLine(pts, attrs);
     else polyline(pts, attrs);
     if (tCur < t[0] || tCur > t[n - 1]) continue;
     const k = idxAtTime(tCur, tr);
     const at = orbit3d ? spacePoint(orbitVec(tr.lat[k], tr.lon[k], tr.alt_km[k], t[k])) : null;
-    marker(tr.lat[k], tr.lon[k], "#7ea6d6", "dot", "",
+    marker(tr.lat[k], tr.lon[k], tr.color || "#7ea6d6", "dot", "",
            { key:"track:" + tr.id, title: tr.label || tr.id, alt_km: tr.alt_km[k], focus: tr.id,
              rows: [["utc", fmtUTC(Date.parse(tr.epoch_utc) + t[k] * 1000).slice(5)]] },
            at || undefined);

@@ -243,3 +243,25 @@ def test_time_must_not_run_backwards():
     z = np.zeros(3)
     with pytest.raises(ValueError, match="runs backwards"):
         GroundTrack(e0, np.array([0.0, 10.0, 5.0]), z, z, z, label="mix")
+    # Round-off where a simulator's phases join is not a reversal.
+    GroundTrack(e0, np.array([0.0, 10.0, 10.0 - 4.5e-13]), z, z, z)
+
+
+def test_track_color_rides_along():
+    from mission_planner.planning import track_set_payload
+
+    e0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    z = np.zeros(2)
+    main = GroundTrack(e0, np.array([0.0, 1.0]), z, z, z, id="main")
+    booster = GroundTrack(
+        e0,
+        np.array([0.5, 1.0]),
+        z,
+        z,
+        z,
+        id="b",
+        parent={"id": "main", "t_s": 0.5},
+        color="#d03b3b",
+    )
+    out = track_set_payload({}, [main, booster])["tracks"]
+    assert "color" not in out[0] and out[1]["color"] == "#d03b3b"

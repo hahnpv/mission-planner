@@ -478,7 +478,8 @@ or file reader returns a **list** of `GroundTrack`s instead of one:
 
 ```python
 GroundTrack(epoch, t, lat, lon, alt, id="25544", label="ISS (ZARYA)",
-            parent=None)   # parent={"id": ..., "t_s": ...}: where it split off another
+            parent=None,   # parent={"id": ..., "t_s": ...}: where it split off another
+            color=None)    # a CSS colour of its own, e.g. "#d03b3b" for a booster branch
 ```
 
 Ids must be unique within the plan; `meta["primary"]` picks the first track
@@ -489,8 +490,9 @@ focus**: panels, markers and modules work on it, the other tracks draw
 faintly with a vehicle dot each, and the focus moves with the track picker
 or a click on a vehicle — your `onPlan` hook runs again when it does. The
 point limit covers all tracks together. A single track's time must never run
-backwards (`GroundTrack` refuses it): several vehicles are several tracks,
-not one.
+backwards (`GroundTrack` refuses it, beyond microsecond round-off): several
+vehicles are several tracks, not one. A track with a `color` draws in it,
+focused or not; the others use the plan's blue.
 
 ## 4. Testing a plugin
 

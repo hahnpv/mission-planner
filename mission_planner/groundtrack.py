@@ -36,7 +36,9 @@ class GroundTrack:
     One track is one vehicle.  A plan may hold several (a constellation, a
     branched trajectory): sources and readers then return a list, and `id`
     (unique within the plan), `label` and `parent` ({"id", "t_s"}: where this
-    track split off another) tell them apart.  Time must not run backwards.
+    track split off another) tell them apart; `color` (a CSS colour) draws it
+    in its own colour instead of the plan's blue -- a booster branch in red.
+    Time must not run backwards (beyond round-off at a phase join).
     """
 
     epoch: datetime
@@ -48,12 +50,14 @@ class GroundTrack:
     id: str | None = None
     label: str | None = None
     parent: dict | None = None
+    color: str | None = None
 
     def __post_init__(self):
         n = len(self.t)
         if not (len(self.lat) == len(self.lon) == len(self.alt) == n):
             raise ValueError("t, lat, lon and alt must have the same length")
-        if n > 1 and np.any(np.diff(np.asarray(self.t, dtype=float)) < 0):
+        # Round-off where a simulator's phases join (~1e-13 s) isn't reversal.
+        if n > 1 and np.any(np.diff(np.asarray(self.t, dtype=float)) < -1e-6):
             which = f"track {self.label or self.id}" if (self.label or self.id) else "track"
             raise ValueError(
                 f"{which} runs backwards in time — several vehicles or branches "
@@ -128,7 +132,7 @@ class GroundTrack:
             "alt_km": (self.alt * 1e-3).round(3).tolist(),
         }
         d.update(self.extra)
-        for key in ("id", "label", "parent"):
+        for key in ("id", "label", "parent", "color"):
             if getattr(self, key) is not None:
                 d[key] = getattr(self, key)
         return d
