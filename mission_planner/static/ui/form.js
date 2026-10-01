@@ -1,10 +1,10 @@
 "use strict";
-// The side panel: trajectory source, orbit shape and propagation controls,
-// planning requests, presets and the catalog.
+// The side panel: trajectory source, orbit shape, anchor and propagation
+// controls, planning requests, presets and the catalog.
 
 // ------------------------------------------------------------ planning
 // The request args for the current form: the source's own, then the shared
-// orbit shape (site/preset) and propagation (any orbit source).
+// orbit shape (any source declaring shape) and propagation (any orbit source).
 function args() {
   const src = currentSource(), a = new URLSearchParams();
   a.set("source", src.id);
@@ -14,13 +14,14 @@ function args() {
     if ($("apo").value) a.set("ha", $("apo").value);
   }
   if (src.kind === "orbit") {
-    a.set("hours", $("hours").value);
-    const ep = $("epoch").value;
+    const hours = horizonHours();
+    a.set("hours", +hours.toFixed(3));
+    const ep = epochValue();
     if (ep) a.set("epoch", ep + ":00+00:00");
     a.set("mode", $("mode").value);
     if (modeInfo($("mode").value).needs_beta) a.set("beta", $("beta").value);
     // dt: the mirror of planning.default_dt (TARGET_POINTS 20000, 30 s floor)
-    const dt = Math.max(30, Math.round(+$("hours").value * 3600 / 20000 / 10) * 10);
+    const dt = Math.max(30, Math.round(hours * 3600 / 20000 / 10) * 10);
     a.set("dt", dt);
   }
   return a;
@@ -59,6 +60,7 @@ async function doPlan() {
   const src = currentSource();
   if (!src.ready()) return;
   if (src.kind === "orbit") {
+    if (!epochValue()) { status("epoch must read YYYY-MM-DD HH:MM (UTC)", true); return; }
     const m = modeInfo($("mode").value);
     if (m.slow) return doJobPlan(m.mode);
   } else if (src.slow) return doJobPlan(src.label);
@@ -196,66 +198,132 @@ async function openFilePreset(name, p) {
   openFile(res.id, { plan: true });
 }
 
-// ------------------------------------------------------------ live controls
-const live = [["hours","hoursv"],["pofs","pofsv"]];
-for (const [a,b] of live) {
-  $(a).oninput = () => $(b).textContent = $(a).value;
-  $(b).textContent = $(a).value;
+// ------------------------------------------------------------ orbit shape
+// Every quantity is a typed number with a slider under it; the number is the
+// source of truth.  The altitude sliders are log-scaled 120 .. 50 000 km, so
+// LEO keeps fine resolution and GEO is within reach of a drag; the field
+// takes anything.  A blank apogee means circular (the "circular" box).
+const ALT_LO = Math.log(120), ALT_HI = Math.log(50000);
+const altToSlider = km =>
+  Math.round((Math.log(Math.min(50000, Math.max(120, km || 120))) - ALT_LO) / (ALT_HI - ALT_LO) * 1000);
+function sliderToAlt(v) {
+  const km = Math.exp(ALT_LO + v / 1000 * (ALT_HI - ALT_LO));
+  const step = km < 2000 ? 5 : km < 10000 ? 10 : 50;
+  return Math.round(km / step) * step;
 }
-// Inclination is the one control with two resolutions.  The input keeps its
-// native 0.01 deg so a COMPUTED inclination (SSO sync, a preset, anything
-// set programmatically) survives assignment intact -- the step attribute
-// would silently round it.  A hand-dragged slider snaps to a round 0.1 deg
-// instead, and arrow keys (below) move a whole 0.1.
+let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, raw} or {file_from} from /api/presets
+let leg = "ascending";   // which leg of the orbit crosses the launch site
+
+function periSync() {
+  const hp = +$("peri").value, apo = $("apo").value, ha = apo ? Math.max(+apo, hp) : hp;
+  $("alt").value = altToSlider(hp);
+  $("apos").value = altToSlider(ha);
+  $("circ").checked = !apo;
+  $("aporow").hidden = !apo;
+  $("eccv").textContent = apo ? "e = " + ((ha - hp) / (2 * RE_KM + hp + ha)).toFixed(3) : "";
+  // Perigee position only means something for an elliptic orbit off a site.
+  $("pofsrow").hidden = !(anchor === "site" && ha > hp);
+  $("nodelbl").textContent = +$("inc").value === 0 && !apo && Math.abs(hp - 35786) < 100
+    ? "station longitude" : "ascending node longitude";
+  syncInc();
+  shapeChanged();
+}
+function setCircular(on) {
+  if (on) $("apo").value = "";
+  else if (!$("apo").value) $("apo").value = $("peri").value;
+  periSync();
+}
+// Typing in a field only mirrors it (no rewriting under the cursor); a
+// finished edit (change) normalises it.
+$("peri").oninput = periSync;
+$("peri").onchange = () => {
+  if ($("apo").value && +$("apo").value < +$("peri").value) $("apo").value = $("peri").value;
+  periSync();
+};
+$("alt").oninput = () => {
+  $("peri").value = sliderToAlt(+$("alt").value);
+  if ($("apo").value && +$("apo").value < +$("peri").value) $("apo").value = $("peri").value;
+  periSync();
+};
+$("apo").oninput = periSync;
+$("apos").oninput = () => { $("apo").value = Math.max(sliderToAlt(+$("apos").value), +$("peri").value); periSync(); };
+$("circ").onchange = () => setCircular($("circ").checked);
+
+// Inclination has two resolutions.  The field and the slider keep 0.01 deg,
+// so a COMPUTED inclination (SSO sync, a preset, anything set
+// programmatically) survives intact; a hand-dragged slider snaps to a round
+// 0.1 deg instead, and arrow keys (below) move a whole 0.1.
 let incShown = +$("inc").value;
 function setInc(v) {                    // the one way inclination is written
   $("inc").value = v;
-  $("incv").textContent = $("inc").value;
+  $("incs").value = v;
   incShown = +$("inc").value;
+  syncInc();
 }
 const incClamp = v => Math.min(120, Math.max(0, v)).toFixed(1);
-$("inc").oninput = () => setInc(incClamp(Math.round(+$("inc").value * 10) / 10));
-// Arrow keys move by the input's own 0.01, which oninput would round straight
+// The site's latitude is the least inclination it can launch into: the
+// slider's floor and a hint, red while the value is below it.
+function syncInc() {
+  const inc = +$("inc").value;
+  const need = anchor === "site" ? Math.abs(+$("sitelat").value || 0) : 0;
+  $("incs").min = need ? Math.ceil(need * 2) / 2 : 0;
+  $("incmin").textContent = need ? `≥ ${need}° from the site` : "";
+  $("incmin").classList.toggle("warn", inc < need);
+  $("incnote").textContent = inc === 0 ? "equatorial" : inc === 90 ? "polar"
+    : inc > 90 ? "retrograde" : "prograde";
+  presetBadge();
+  planHint();
+}
+$("inc").oninput = () => {
+  const v = +$("inc").value;
+  if (Number.isFinite(v)) { $("incs").value = v; incShown = v; syncInc(); }
+};
+$("inc").onchange = () => setInc(incClamp(+$("inc").value || 0));
+$("incs").oninput = () => setInc(incClamp(Math.round(+$("incs").value * 10) / 10));
+// Arrow keys move by the slider's own 0.01, which oninput would round straight
 // back onto the current value -- the slider would look stuck.  Handle them
-// here as a full 0.1 step instead.
-$("inc").addEventListener("keydown", ev => {
+// here as a full 0.1 step instead, to the next 0.1 gridline (so an arrow off
+// a computed 98.19 lands on 98.2 / 98.1 rather than 98.29).
+$("incs").addEventListener("keydown", ev => {
   const d = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[ev.key];
   if (d === undefined) return;
   ev.preventDefault();
-  // Step to the next 0.1 gridline, so an arrow off a computed value like
-  // 98.19 lands on 98.2 / 98.1 rather than 98.29.
   setInc(incClamp(d > 0 ? Math.floor(incShown * 10 + 1e-6) / 10 + 0.1
                         : Math.ceil(incShown * 10 - 1e-6) / 10 - 0.1));
 });
-setInc($("inc").value);
-// Perigee: the number field is the source of truth; the slider is a
-// quick-set for the LEO range (values above 1000 km live in the field).
-$("alt").oninput = () => { $("peri").value = $("alt").value; periSync(); };
-$("peri").oninput = () => { $("alt").value = $("peri").value; periSync(); };
-function periSync() {
-  $("altv").textContent = $("peri").value;
-  // Perigee position only means something for an elliptic orbit off a site.
-  $("pofsrow").hidden = !(source === "site" && +$("apo").value > +$("peri").value);
-  shapeChanged();
-}
-$("apo").oninput = periSync;
-periSync();
+$("pofs").oninput = () => { $("pofsv").textContent = $("pofs").value; };
 
 // ------------------------------------------------------------ orbit presets
-// Element-anchored classics: no launch site; RAAN from node/station longitude.
-let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, raw} or {file_from} from /api/presets
+// Textbook orbits as a fill for the shape: picking one writes the fields, and
+// the form stays complete and plannable.  The preset stays "in play" (for the
+// modules' onPreset hooks) until another is picked; a badge says "modified"
+// once the fields have moved away from its record.  A preset carrying
+// node_lon or argp is anchored by elements, so it switches the anchor to the
+// node longitude.
 function buildPresets(list) {
   PRESETS = {};
   for (const p of list)
     PRESETS[p.name] = p.file_from ? { file_from: p.file_from }
       : { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
           argp: p.argp_deg, node_lon: p.node_lon_deg, raw: p };
+  const label = p => p.file_from ? `${p.name} · file`
+    : `${p.name} · ${p.perigee_km}${(p.apogee_km ?? p.perigee_km) > p.perigee_km
+       ? "×" + p.apogee_km : ""} km / ${p.inc_deg}°`;
   const cur = $("preset").value;
-  $("preset").innerHTML = "<option value='' disabled hidden>choose an orbit…</option>"
-    + list.map(p => `<option>${escHtml(p.name)}</option>`).join("");
-  if (!cur) $("preset").value = "";
+  $("preset").innerHTML = "<option value=''>custom shape</option>"
+    + list.map(p => `<option value="${escHtml(p.name)}">${escHtml(label(p))}</option>`).join("");
   if (cur && PRESETS[cur]) $("preset").value = cur;
   else if (cur) { $("preset").value = ""; $("preset").onchange(); }
+  presetBadge();
+}
+function presetBadge() {
+  const p = activePreset && PRESETS[activePreset];
+  $("presetbadge").hidden = !p || !!p.file_from;
+  if (!p || p.file_from) return;
+  const s = getShape();
+  const mod = p.hp !== s.hp || p.ha !== s.ha || Math.abs(p.inc - s.inc) > 0.051;
+  $("presetbadge").textContent = mod ? "modified" : "preset";
+  $("presetbadge").classList.toggle("mod", mod);
 }
 
 // Form hooks for modules (ctx.onPreset / onShapeChange / getShape / setShape,
@@ -265,32 +333,33 @@ function buildPresets(list) {
 // activePreset (state.js) is the preset's NAME: a catalog refresh rebuilds the
 // PRESETS records, and the name survives that where an object would not.
 // Every live onPreset hook learns the preset in play: the catalog record and
-// name, or (null, null) when none is (none chosen, or another source).
+// name, or (null, null) when none is (none chosen, or a source without the
+// shape block).
 function presetChanged() {
-  MP.fire(MP._preset, "module preset hook",
-          activePreset ? PRESETS[activePreset].raw : null, activePreset);
+  const on = activePreset && currentSource().shape;
+  MP.fire(MP._preset, "module preset hook", on ? PRESETS[activePreset].raw : null, on ? activePreset : null);
 }
 function shapeChanged() {
   // The form's first sync runs before plugins.js (MP) and any module loads.
   if (typeof MP === "undefined") return;
   MP.fire(MP._shape, "module shape hook", getShape());
 }
-// The orbit shape as the form holds it; epoch is the input's own string,
-// "YYYY-MM-DDTHH:MM" in UTC ("" when unset).
+// The orbit shape as the form holds it; epoch is normalised to
+// "YYYY-MM-DDTHH:MM" in UTC ("" when unset or unreadable).
 function getShape() {
   const hp = +$("peri").value;
   return { hp, ha: Math.max(+$("apo").value || hp, hp), inc: +$("inc").value,
-           node_lon: +$("nodelon").value, epoch: $("epoch").value, preset: activePreset };
+           node_lon: +$("nodelon").value, epoch: epochValue() || "", preset: activePreset };
 }
 // Write shape fields through the form's own setters.  A new perigee/apogee
 // runs the usual sync, which reaches onShapeChange hooks; inc / node_lon alone
 // don't, so a hook may call setShape({inc, node_lon}) without looping.
 function setShape(v) {
   if (v.inc != null) setInc(v.inc);
-  if (v.node_lon != null) $("nodelon").value = v.node_lon;
+  if (v.node_lon != null) { $("nodelon").value = v.node_lon; $("nodelons").value = v.node_lon; planHint(); }
   if (v.hp != null || v.ha != null) {
     const hp = v.hp ?? +$("peri").value;
-    $("peri").value = hp; $("alt").value = hp;
+    $("peri").value = hp;
     if (v.ha != null) $("apo").value = v.ha > hp ? v.ha : "";
     periSync();
   }
@@ -303,109 +372,217 @@ $("preset").onchange = () => {
     return openFilePreset(name, PRESETS[name]);
   }
   activePreset = name || null;
-  $("nodelonrow").style.display = activePreset ? "block" : "none";
-  showSource();
   if (activePreset) {
     const p = PRESETS[name];
-    $("peri").value = p.hp; $("alt").value = p.hp;
+    $("peri").value = p.hp;
     $("apo").value = p.ha > p.hp ? p.ha : "";
     setInc(p.inc);
-    $("nodelon").value = p.node_lon ?? 0;
-    status(`preset ${name} — adjust if needed, then plan.`);
+    if (p.node_lon != null) { $("nodelon").value = p.node_lon; $("nodelons").value = p.node_lon; }
+    const elements = p.node_lon != null || p.argp != null;
+    if (elements && anchor !== "node" && source === "orbit") setAnchor("node");
+    status(`${name} — adjust if needed, then plan.`
+      + (elements ? ` anchored by its node longitude.` : ""));
   }
   presetChanged();
   periSync();
 };
-$("epoch").onchange = shapeChanged;
+
+// ------------------------------------------------------------ epoch & horizon
+// The epoch is ISO text in UTC ("YYYY-MM-DD HH:MM"; a T, seconds or a Z are
+// accepted), so a value from a log or an ephemeris pastes straight in.  The
+// calendar button opens the browser's picker over a hidden datetime-local.
+const EPOCH_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?\s*Z?$/i;
+function epochValue() {
+  const m = EPOCH_RE.exec($("epoch").value.trim());
+  if (!m) return null;
+  const v = m[1] + "T" + m[2];
+  return Number.isNaN(Date.parse(v + ":00Z")) ? null : v;
+}
+function setEpoch(d) {        // d: a Date, or a "YYYY-MM-DDTHH:MM" string
+  const v = d instanceof Date ? d.toISOString().slice(0, 16) : d;
+  $("epoch").value = v.replace("T", " ");
+  $("epoch").classList.remove("err");
+  shapeChanged();
+}
+$("epoch").oninput = () => $("epoch").classList.toggle("err", !epochValue());
+$("epoch").onchange = () => { const v = epochValue(); if (v) setEpoch(v); else shapeChanged(); };
+$("epochnow").onclick = () => setEpoch(new Date());
+$("epochcal").onclick = () => {
+  const p = $("epochpick");
+  p.value = epochValue() || "";
+  try { p.showPicker(); } catch { p.focus(); }
+};
+$("epochpick").onchange = () => { if ($("epochpick").value) setEpoch($("epochpick").value); };
+
+// How long to propagate: a number with a unit (hours, days or revolutions of
+// the current shape), and chips for the usual spans.
+function periodS() {
+  const s = getShape(), a = RE_KM + (s.hp + s.ha) / 2;
+  return 2 * Math.PI * Math.sqrt(a ** 3 / MU_KM);
+}
+function horizonHours() {
+  const n = Math.max(0, +$("hours").value || 0), u = $("hunit").value;
+  if (u === "days") return n * 24;
+  if (u === "revs") return n * (currentSource().shape ? periodS() : 5400) / 3600;
+  return n;
+}
+function syncHorizonChips() {
+  const cur = `${$("hours").value} ${$("hunit").value}`;
+  $("horizon").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.h === cur));
+}
+$("horizon").querySelectorAll("button").forEach(b => b.onclick = () => {
+  const [n, u] = b.dataset.h.split(" ");
+  $("hours").value = n; $("hunit").value = u;
+  syncHorizonChips();
+});
+$("hours").oninput = $("hunit").onchange = syncHorizonChips;
 $("mode").onchange = () => $("betarow").style.display =
   modeInfo($("mode").value).needs_beta ? "block" : "none";
+
+// ------------------------------------------------------------ anchor
+// How the orbit source ties the orbit to the Earth: its plane over a launch
+// site at the epoch (server source `site`), or its ascending node over a
+// longitude (server source `preset`).
+function setAnchor(id) {
+  anchor = id;
+  $("anchorseg").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.anchor === id));
+  $("anchor_site").hidden = id !== "site";
+  $("anchor_node").hidden = id !== "node";
+  if (source === "orbit") $("epochlbl").textContent = id === "site" ? "launch epoch (utc)" : "epoch (utc)";
+  if (id === "site") siteChanged();
+  periSync();
+}
+$("anchorseg").querySelectorAll("button").forEach(b => b.onclick = () => setAnchor(b.dataset.anchor));
+function setLeg(id) {
+  leg = id;
+  $("legseg").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.leg === id));
+  planHint();
+}
+$("legseg").querySelectorAll("button").forEach(b => b.onclick = () => setLeg(b.dataset.leg));
+
+// The site: one of the catalog's, or "custom" with typed or picked
+// coordinates -- the dropdown then reads "custom (lat, lon)", so nothing
+// changes behind your back.
+const fmtLat = v => `${Math.abs(v).toFixed(2)}°${v < 0 ? "S" : "N"}`;
+const fmtLon = v => `${Math.abs(v).toFixed(2)}°${v < 0 ? "W" : "E"}`;
+const siteName = () => $("site").value === "custom"
+  ? `${fmtLat(+$("sitelat").value || 0)} ${fmtLon(+$("sitelon").value || 0)}` : $("site").value;
 $("site").onchange = () => {
   const s = sitesList.find(x => x.name === $("site").value);
-  if (s) {
-    $("sitelat").value = s.lat; $("sitelon").value = s.lon;
-    // A site can only inject into inc >= |lat|: bump the slider if needed.
-    const need = Math.abs(s.lat);
-    if (+$("inc").value < need) {
-      setInc(Math.ceil(need * 2) / 2);
-      status(`inclination raised to ${$("inc").value}° — minimum from `
-        + `${s.name} (|lat| = ${need}°)`);
-    }
-  }
+  if (s) { $("sitelat").value = s.lat; $("sitelon").value = s.lon; }
+  siteChanged();
 };
-$("sitelat").oninput = $("sitelon").oninput = () => { $("site").value = "custom"; };
+// After the site or its coordinates moved: a site can only inject into
+// inc >= |lat|, so bump the inclination if needed (the hint shows the floor).
+function siteChanged() {
+  const need = Math.abs(+$("sitelat").value || 0);
+  if (anchor === "site" && +$("inc").value < need) {
+    setInc(Math.ceil(need * 2) / 2);
+    status(`inclination raised to ${$("inc").value}° — the minimum from ${siteName()} (|lat| = ${need}°)`);
+  }
+  syncInc();
+}
+function setCustomSite() {
+  let o = $("site").querySelector("option[value=custom]");
+  if (!o) { o = new Option("", "custom"); $("site").appendChild(o); }
+  $("site").value = "custom";
+  o.textContent = `custom (${siteName()})`;
+  siteChanged();
+}
+$("sitelat").oninput = $("sitelon").oninput = setCustomSite;
+$("sitepick").onclick = () => {
+  if (mapPick) { pickOnMap(null); return; }
+  pickOnMap((lat, lon) => {
+    $("sitelat").value = lat.toFixed(2); $("sitelon").value = lon.toFixed(2);
+    setCustomSite();
+    status(`launch site set to ${siteName()}.`);
+  }, "sitepick");
+};
+$("nodelon").oninput = () => { $("nodelons").value = $("nodelon").value; planHint(); };
+$("nodelons").oninput = () => { $("nodelon").value = $("nodelons").value; planHint(); };
+
+// One line under the plan button saying what will be planned.
+function planHint() {
+  const src = currentSource();
+  if (src.id !== "orbit") { $("planhint").textContent = ""; return; }
+  const s = getShape(), shape = s.ha > s.hp ? `${s.hp}×${s.ha} km` : `${s.hp} km`;
+  const name = activePreset
+    ? activePreset + ($("presetbadge").classList.contains("mod") ? "*" : "") : "custom";
+  const where = anchor === "site" ? `from ${siteName()}, ${leg}` : `node at ${$("nodelon").value || 0}°E`;
+  $("planhint").textContent = `${name} · ${shape} / ${s.inc}° · ${where}`;
+}
 
 // ------------------------------------------------------------ trajectory source
 // Where the trajectory comes from.  Each source has its own panel of options;
 // the orbit form (shape, epoch, propagation, plan) follows once the source is
-// ready -- a preset source isn't until an orbit is picked.  Each source keeps
-// its own shape values, so switching back and forth doesn't cross them over.
-// A source: {id, label, kind: "orbit"|"trajectory", ready(), args(q)} plus
-// shape (uses the shared orbit-shape block), epochLabel, planLabel, slow, and
-// mod (the plugin that added it; its button shows only while that's active).
-// The server side is planning.py (core) or a plugin spec's `sources` key.
+// ready.  A source: {id, label, kind: "orbit"|"trajectory", ready(), args(q)}
+// plus shape (shows the shared orbit-shape block), epochLabel, planLabel,
+// slow, and mod (the plugin that added it; its chip shows only while that's
+// active).  The core's one source is the orbit, which the server knows as
+// `site` or `preset` by its anchor; plugins add theirs through a spec's
+// `sources` key and ctx.addSource.
 const SOURCES = [
-  { id:"site", label:"Launch site", kind:"orbit", shape:true, epochLabel:"launch epoch (utc)",
+  { id:"orbit", label:"Orbit", kind:"orbit", shape:true,
     ready: () => true,
     args(a) {
-      if ($("site").value === "custom") {
-        a.set("lat", $("sitelat").value || 0); a.set("lon", $("sitelon").value || 0);
-      } else a.set("site", $("site").value);
-      a.set("leg", $("leg").value);
-      if ($("apo").value) a.set("pofs", $("pofs").value);
-    } },
-  { id:"preset", label:"Orbit preset", kind:"orbit", shape:true, epochLabel:"epoch (utc)",
-    ready: () => !!activePreset,
-    args(a) {
-      a.set("argp", PRESETS[activePreset].argp || 0);
-      a.set("node_lon", $("nodelon").value || 0);
+      if (anchor === "site") {
+        a.set("source", "site");
+        if ($("site").value === "custom") {
+          a.set("lat", $("sitelat").value || 0); a.set("lon", $("sitelon").value || 0);
+        } else a.set("site", $("site").value);
+        a.set("leg", leg);
+        if ($("apo").value) a.set("pofs", $("pofs").value);
+      } else {
+        a.set("source", "preset");
+        a.set("argp", (activePreset && PRESETS[activePreset]?.argp) || 0);
+        a.set("node_lon", $("nodelon").value || 0);
+      }
     } },
 ];
-const currentSource = () => SOURCES.find(x => x.id === source);
+const currentSource = () => SOURCES.find(x => x.id === source) || SOURCES[0];
 const sourceShown = x => !x.mod || MP.active(x.mod);
-const SHAPE = ["peri", "apo", "inc", "pofs"];
-const shapeMemo = {};
+// The old core ids still work: "site" / "preset" are the orbit with that anchor.
+const SOURCE_ALIAS = { site: "site", preset: "node" };
 function setSource(id) {
-  if (id === source) return;
-  shapeMemo[source] = Object.fromEntries(SHAPE.map(k => [k, $(k).value]));
-  source = id;
-  const memo = shapeMemo[id];
-  if (memo) {
-    for (const k of SHAPE) $(k).value = memo[k];
-    $("alt").value = memo.peri; setInc(memo.inc); $("pofsv").textContent = memo.pofs;
+  const alias = SOURCE_ALIAS[id];
+  if (alias) id = "orbit";
+  if (id !== source) {
+    source = id;
+    showSource();
+    presetChanged();
+    periSync();
+    status(currentSource().ready() ? "set parameters, then plan." : "choose a trajectory.");
   }
-  activePreset = (id === "preset" && $("preset").value) || null;
-  showSource();
-  presetChanged();
-  periSync();
-  if (id === "site") $("site").onchange();
-  status(currentSource().ready() ? "set parameters, then plan." : "choose an orbit.");
+  if (alias && alias !== anchor) setAnchor(alias);
 }
 function showSource() {
   const src = currentSource(), ready = src.ready();
   for (const x of SOURCES) $("src_" + x.id).hidden = x.id !== source;
   document.querySelectorAll("#srcseg button").forEach(b => b.classList.toggle("on", b.dataset.src === source));
-  $("shapeform").hidden = !(ready && src.shape);
+  $("shapeform").hidden = !src.shape;
   $("propform").hidden = !(ready && src.kind === "orbit");
   $("planrow").hidden = !ready;
   $("plan").textContent = src.planLabel || (src.kind === "orbit" ? "plan orbit" : "show trajectory");
   if (src.epochLabel) $("epochlbl").textContent = src.epochLabel;
+  else if (src.id === "orbit") $("epochlbl").textContent = anchor === "site" ? "launch epoch (utc)" : "epoch (utc)";
+  planHint();
 }
-// The source buttons: core ones plus those of active plugins.  If the
-// current source's plugin went away, fall back to a launch site.
+// The source chips: the core's plus those of active plugins.  If the current
+// source's plugin went away, fall back to the orbit.
 function renderSources() {
   $("srcseg").innerHTML = SOURCES.filter(sourceShown).map(x =>
-    `<button class="small ghost" data-src="${x.id}">${escHtml(x.label)}</button>`).join("");
+    `<button class="${x.mod ? "plug" : ""}" data-src="${x.id}">${escHtml(x.label)}</button>`).join("");
   document.querySelectorAll("#srcseg button").forEach(b => b.onclick = () => setSource(b.dataset.src));
-  if (!sourceShown(currentSource())) setSource("site");
+  if (!sourceShown(currentSource())) setSource("orbit");
   showSource();
 }
 
 // ------------------------------------------------------------ catalog
 function buildSites() {
   const cur = $("site").value;
-  $("site").innerHTML = sitesList.map(s => `<option>${escHtml(s.name)}</option>`).join("")
-    + "<option value='custom'>custom…</option>";
-  if (cur === "custom" || sitesList.some(s => s.name === cur)) $("site").value = cur;
+  $("site").innerHTML = sitesList.map(s => `<option>${escHtml(s.name)}</option>`).join("");
+  if (cur === "custom") setCustomSite();
+  else if (sitesList.some(s => s.name === cur)) { $("site").value = cur; planHint(); }
   else $("site").onchange();
 }
 // Sites, presets and overlays: the core catalog plus every active data pack.
@@ -418,3 +595,9 @@ async function refreshCatalogs() {
   buildSites();
   buildPresets(presets);
 }
+
+// ------------------------------------------------------------ first state
+setLeg("ascending");
+setAnchor("site");
+syncHorizonChips();
+$("pofsv").textContent = $("pofs").value;

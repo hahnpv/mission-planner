@@ -10,7 +10,9 @@ tools are always the core's items plus those of every active pack.
 **Launch sites** — Cape Canaveral / KSC, Vandenberg, Wallops, Kodiak,
 Boca Chica, Kourou, Baikonur, Mahia.
 
-**Orbit presets** — anchored by elements, not a launch site:
+**Orbit presets** — textbook shapes the orbit picker fills in; those with a
+node longitude or argument of perigee are anchored by those elements rather
+than a launch site:
 
 | preset | perigee × apogee (km) | inclination | notes |
 |---|---|---|---|

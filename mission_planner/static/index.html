@@ -11,62 +11,111 @@
 <div id="menubar"></div>
 <div id="app">
 <div id="side">
+<div id="sidescroll">
   <h1>Mission Planner</h1>
 
-  <!-- Trajectory source: where the trajectory comes from.  Each source shows
-       only its own panel; the orbit shape block follows for site/preset, the
-       propagation block for any orbit source.  Plugins add sources
-       (ctx.addSource), whose panels land in #srcpanels. -->
+  <!-- Trajectory source: where the trajectory comes from.  The core's one
+       source is an orbit: the shape block (filled from a preset or typed; it
+       also serves plugin sources declaring shape: true), anchored to the Earth
+       by a launch site or by its node longitude (the server's `site` /
+       `preset` sources).  Each source shows only its own panel; plugins add
+       sources (ctx.addSource), whose panels land in #srcpanels. -->
   <div class="lbl">trajectory source</div>
-  <div class="seg" id="srcseg"></div>
+  <div class="chips" id="srcseg"></div>
 
-  <div id="src_site">
-    <div class="lbl">launch site</div>
-    <select id="site"></select>
-    <div class="row" style="margin-top:4px">
-      <input id="sitelat" type="number" step="0.1" placeholder="lat">
-      <input id="sitelon" type="number" step="0.1" placeholder="lon">
-    </div>
-    <div class="lbl">leg over site</div>
-    <select id="leg">
-      <option value="ascending">ascending (northbound)</option>
-      <option value="descending">descending (southbound)</option>
-    </select>
-  </div>
-
-  <div id="src_preset">
+  <div id="shapeform">
     <div class="lbl">orbit</div>
-    <select id="preset"></select>
-    <div id="nodelonrow" style="display:none">
-      <div class="lbl">node / station longitude &deg;E</div>
-      <input id="nodelon" type="number" step="5" value="0">
+    <div class="fill">
+      <select id="preset" aria-label="fill the shape from a preset"></select>
+      <span class="badge" id="presetbadge" hidden></span>
     </div>
     <div id="presetctl"></div>
+
+    <div class="lbl">perigee</div>
+    <div class="q">
+      <div class="unit"><input id="peri" type="number" step="10" min="100" value="400" aria-label="perigee altitude, km"><span>km</span></div>
+      <label class="check"><input id="circ" type="checkbox" checked> circular</label>
+      <input id="alt" type="range" min="0" max="1000" step="1" aria-label="perigee altitude slider">
+    </div>
+    <div id="aporow">
+      <div class="lbl">apogee</div>
+      <div class="q">
+        <div class="unit"><input id="apo" type="number" step="10" aria-label="apogee altitude, km"><span>km</span></div>
+        <span class="hint" id="eccv"></span>
+        <input id="apos" type="range" min="0" max="1000" step="1" aria-label="apogee altitude slider">
+      </div>
+    </div>
+    <div class="lbl">inclination <span class="hint" id="incmin"></span></div>
+    <div class="q">
+      <div class="unit"><input id="inc" type="number" step="0.1" min="0" max="120" value="51.6" aria-label="inclination, degrees"><span>&deg;</span></div>
+      <span class="hint" id="incnote"></span>
+      <input id="incs" type="range" min="0" max="120" step="0.01" value="51.6" aria-label="inclination slider">
+    </div>
+
+  </div>
+
+  <div id="src_orbit">
+    <div class="lbl">anchored by</div>
+    <div class="tog" id="anchorseg">
+      <button data-anchor="site">launch site</button>
+      <button data-anchor="node">node longitude</button>
+    </div>
+
+    <div id="anchor_site">
+      <div class="lbl">launch site</div>
+      <div class="fill">
+        <select id="site"></select>
+        <button id="sitepick" class="small ghost" type="button" title="take the next click on the map as the site">pick on map</button>
+      </div>
+      <div class="coord">
+        <div class="unit"><input id="sitelat" type="number" step="0.01" min="-90" max="90" aria-label="site latitude, degrees north"><span>&deg;N</span></div>
+        <div class="unit"><input id="sitelon" type="number" step="0.01" min="-180" max="180" aria-label="site longitude, degrees east"><span>&deg;E</span></div>
+      </div>
+      <div class="lbl">leg over site</div>
+      <div class="tog" id="legseg">
+        <button data-leg="ascending">&#8599; ascending</button>
+        <button data-leg="descending">&#8600; descending</button>
+      </div>
+      <div id="pofsrow">
+        <div class="lbl">perigee <span class="v" id="pofsv">0</span>&deg; downrange of site</div>
+        <input id="pofs" type="range" min="0" max="359" step="1" value="0" aria-label="perigee position downrange of the site">
+      </div>
+    </div>
+
+    <div id="anchor_node">
+      <div class="lbl" id="nodelbl">ascending node longitude</div>
+      <div class="q">
+        <div class="unit"><input id="nodelon" type="number" step="5" min="-180" max="180" value="0" aria-label="node longitude, degrees east"><span>&deg;E</span></div>
+        <span class="hint">at the epoch</span>
+        <input id="nodelons" type="range" min="-180" max="180" step="1" value="0" aria-label="node longitude slider">
+      </div>
+    </div>
   </div>
 
   <div id="srcpanels"></div>
 
-  <div id="shapeform">
-    <div class="lbl">perigee altitude <span id="altv" style="color:var(--ink)"></span> km</div>
-    <input id="alt" type="range" min="120" max="1000" step="5" value="160">
-    <div class="row" style="margin-top:2px">
-      <input id="peri" type="number" step="10" value="160" title="perigee altitude km">
-      <input id="apo" type="number" step="10" placeholder="apogee km (blank = circular)">
-    </div>
-    <div id="pofsrow">
-      <div class="lbl">perigee position <span id="pofsv" style="color:var(--ink)">0</span>&deg; downrange of site</div>
-      <input id="pofs" type="range" min="0" max="359" step="1" value="0">
-    </div>
-    <div class="lbl">inclination <span id="incv" style="color:var(--ink)"></span> deg</div>
-    <input id="inc" type="range" min="0" max="120" step="0.01" value="51.6">
-  </div>
-
   <div id="propform">
-    <div class="lbl" id="epochlbl">launch epoch (utc)</div>
-    <input id="epoch" type="datetime-local" step="60">
+    <div class="lbl" id="epochlbl">epoch (utc)</div>
+    <div class="fill">
+      <input id="epoch" class="mono" placeholder="YYYY-MM-DD HH:MM" spellcheck="false" aria-label="epoch, UTC">
+      <button id="epochnow" class="small ghost" type="button">now</button>
+      <button id="epochcal" class="small ghost" type="button" title="calendar" aria-label="calendar picker">&#9783;</button>
+      <input id="epochpick" type="datetime-local" step="60" tabindex="-1" aria-hidden="true">
+    </div>
 
-    <div class="lbl">propagate <span id="hoursv" style="color:var(--ink)"></span> hours</div>
-    <input id="hours" type="range" min="1" max="720" step="1" value="24">
+    <div class="lbl">propagate</div>
+    <div class="fill">
+      <input id="hours" type="number" step="1" min="0" value="24" aria-label="propagation span">
+      <select id="hunit" class="small" aria-label="propagation span unit">
+        <option value="hours">hours</option><option value="days">days</option><option value="revs">revs</option>
+      </select>
+    </div>
+    <div class="chips" id="horizon">
+      <button class="small" data-h="1 revs">1 rev</button>
+      <button class="small on" data-h="24 hours">24 h</button>
+      <button class="small" data-h="7 days">7 d</button>
+      <button class="small" data-h="30 days">30 d</button>
+    </div>
 
     <div class="lbl">propagation mode</div>
     <select id="mode">
@@ -74,17 +123,22 @@
       <option value="decay">drag decay (ballistic coeff.)</option>
     </select>
     <div id="betarow" style="display:none">
-      <div class="lbl">ballistic coefficient β = m/(C<sub>d</sub>A) kg/m²</div>
-      <input id="beta" type="number" step="10" value="300">
+      <div class="lbl">ballistic coefficient &beta; = m/(C<sub>d</sub>A)</div>
+      <div class="unit"><input id="beta" type="number" step="10" value="300" aria-label="ballistic coefficient"><span>kg/m&sup2;</span></div>
     </div>
   </div>
 
-  <div id="planrow" style="margin-top:12px"><button id="plan" class="primary">plan orbit</button></div>
+  <!-- Sticks to the bottom of the scrolling part of the panel, so the plan
+       button is always in reach; the readback says what will be planned. -->
+  <div id="planrow">
+    <button id="plan" class="primary">plan orbit</button>
+    <div class="hint" id="planhint"></div>
+  </div>
 
   <!-- A multi-track plan (constellation, multi-vehicle file): which track is
        in focus.  The others draw faintly; clicking one on the map focuses it. -->
   <div id="trackpick" hidden>
-    <div class="lbl">in focus · <span id="trackcount"></span> tracks</div>
+    <div class="lbl">in focus &middot; <span id="trackcount"></span> tracks</div>
     <select id="tracksel"></select>
   </div>
 
@@ -93,8 +147,9 @@
   <div id="summary"></div>
 
   <div id="elements"></div>
+</div>
 
-  <!-- Standard camera views (camera.js), pinned to the bottom of the panel. -->
+  <!-- Standard camera views (camera.js): the panel's footer. -->
   <div id="camerabar"></div>
 </div>
 
@@ -154,7 +209,7 @@
 (async function () {
   try {
     const now = new Date();
-    $("epoch").value = now.toISOString().slice(0, 16);
+    setEpoch(now);
     renderSources();
     [coast] = await Promise.all([api("/api/coastline"), refreshCatalogs()]);
     if (coast.error) throw new Error(coast.error);

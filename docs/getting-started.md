@@ -26,22 +26,25 @@ rest:
 python -m mission_planner.server
 ```
 
-Open <http://127.0.0.1:3030>. The side panel starts on **Launch site**:
+Open <http://127.0.0.1:3030>. The side panel starts on an **Orbit** anchored
+by a **launch site**:
 
-1. Pick a site (or *custom…* and type a latitude and longitude).
-2. Set the perigee altitude — leave the apogee blank for a circular orbit —
-   and the inclination. The inclination can't be less than the site's
-   latitude; the form raises it for you when you pick a site.
-3. Set the launch epoch (UTC) and how many hours to propagate.
-4. Press **plan orbit**.
+1. Pick a site, type a latitude and longitude, or **pick on map** and click.
+2. Set the perigee altitude — untick **circular** for an apogee — and the
+   inclination, or fill them from a preset with the **orbit** picker. The
+   inclination can't be less than the site's latitude; the slider stops
+   there and the form raises it for you when you pick a site.
+3. Set the launch epoch (UTC) and how long to propagate (hours, days or
+   revolutions).
+4. Press **plan orbit**; the line under the button says what it will plan.
 
 The ground track appears on the map, the orbit's elements and rates appear
 below the panels, and the **status bar** along the bottom says what was
 planned. Press ▶ to play it back; use **1 rev / 90 min / 24 h / all** to
 choose how much of the track is drawn.
 
-Try **Orbit preset → Molniya**, then **View → Orbit** to see the orbit in
-space. [The web UI](guide/web-ui.md) walks through everything else.
+Try the **Molniya** preset (it anchors itself by node longitude instead of
+a site), then **View → Orbit** to see the orbit in space. [The web UI](guide/web-ui.md) walks through everything else.
 
 ## Plan an orbit in Python
 

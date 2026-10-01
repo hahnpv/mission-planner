@@ -211,10 +211,10 @@ plugin is switched off.
 | `onClick(fn)` | `fn(lat, lon)` for a click on the map or globe |
 | `footprintFilter(fn)` | `fn(track, k)` → `true` / `false` / `null`: whether a vehicle (at sample `k`, the playback time) shows its horizon footprint. While any live filter answers non-null, the map draws the footprint of every track that passes them all, instead of the View menu's single footprint of the track in focus (example: the ground-station plugin, `examples/groundstation/`) |
 | `seek(t_s)` | move playback to seconds past the plan epoch |
-| `onPreset(cb)` | `cb(record, name)` whenever the orbit preset in play changes, with the preset's catalog record (so a module can claim presets by a key of its own, e.g. `sun_synchronous`); `cb(null, null)` when none is (none chosen, or another source) |
+| `onPreset(cb)` | `cb(record, name)` whenever the orbit preset in play changes, with the preset's catalog record (so a module can claim presets by a key of its own, e.g. `sun_synchronous`); `cb(null, null)` when none is (none chosen, or a source without the shape block). A preset stays in play while the user edits the shape it filled in |
 | `onShapeChange(cb)` | `cb(shape)` when perigee, apogee or epoch change |
 | `getShape()` / `setShape(v)` | the form's orbit shape `{hp, ha, inc, node_lon, epoch, preset}` (`epoch` is the input's `"YYYY-MM-DDTHH:MM"` UTC string); `setShape({hp?, ha?, inc?, node_lon?})` writes through the form's setters. New `hp`/`ha` re-run `onShapeChange` hooks, `inc`/`node_lon` alone don't, so a hook can set them without looping (example: `modules/sso.py`) |
-| `presetControls(html)` | rows of your own under the orbit-preset dropdown; returns the element. The core hides it while the plugin is off; show or hide what's inside (say, only for your presets) yourself |
+| `presetControls(html)` | rows of your own under the orbit picker (the preset dropdown at the top of the shape block); returns the element. The core hides it while the plugin is off; show or hide what's inside (say, only for your presets) yourself |
 | `addDisplayToggle(label, checked, cb)` | a checkbox row in the View menu's layers section; returns the `<input>` holding the state |
 | `addMenuItem(menu, item)` | an item in a menu-bar menu (created if new); item types in `static/ui/menubar.js` |
 | `addSource(spec)` / `updateSource()` | a trajectory source's UI half (section 3.5) |
@@ -327,8 +327,10 @@ mode raises is reported as your plugin's failure (section 3.1, errors).
 
 ### 3.5 Trajectory sources — `sources` and `ctx.addSource`
 
-A source is *where a plan comes from*. The core has two: a launch site and
-an element-anchored preset. A plugin adds one by giving both halves:
+A source is *where a plan comes from*. The core's is the orbit, which the
+server knows as two sources by its anchor: `site` (the plane over a launch
+site) and `preset` (the node over a longitude). A plugin adds one by giving
+both halves:
 
 - the Python half in the spec: `fn(args)` returns `(Orbit, meta)` for
   kind `"orbit"` (the core then propagates it with the usual mode / hours /
@@ -336,11 +338,16 @@ an element-anchored preset. A plugin adds one by giving both halves:
   say from a file or a simulator). `meta` joins the plan summary; a `title`
   there is what the status line shows.
 - the JavaScript half: `ctx.addSource({id, label, html, init(panel),
-  ready(), args(q), planLabel})` in the plugin's `js`. It adds a button to
-  the source row and a panel of the source's own inputs; `args(q)` copies
+  ready(), args(q), planLabel, shape})` in the plugin's `js`. It adds a chip
+  to the source row and a panel of the source's own inputs; `args(q)` copies
   those inputs into the request as query args (`fn` receives them), and
   `ready()` says whether the plan button should be enabled. Call
-  `ctx.updateSource()` when `ready()` may have changed.
+  `ctx.updateSource()` when `ready()` may have changed. `shape: true` shows
+  the core's orbit-shape block (the preset picker, perigee, apogee,
+  inclination) above your panel, and the request then carries `hp`, `ha`
+  (elliptic only) and `inc` as the orbit source's does — for a source that
+  is an orbit of those elements plus some of its own (a constellation,
+  say), rather than drawing them again.
 
 ```python
 def from_state_vector(a):

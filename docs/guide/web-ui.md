@@ -12,27 +12,42 @@ all of it).
 
 ## Where a plan comes from
 
-The row of buttons at the top of the side panel picks the **trajectory
-source**. Each source has its own options; the orbit form below follows once
-the source is ready.
+The chips at the top of the side panel pick the **trajectory source**. The
+core's source is an **orbit**; plugins add others (a file, a constellation,
+…), whose chips appear in the same row while the plugin is on. Each source
+has a panel of its own; the epoch and propagation block and the plan button
+follow once the source is ready.
 
-**Launch site**
-:   An orbit whose plane passes over a site at the launch epoch. Choose a
-    site from the catalog or *custom…* with your own latitude and longitude,
-    and whether the site sits on the **ascending** (northbound) or
-    **descending** leg. The inclination can't be below the site's latitude,
-    and picking a site raises it if needed. For an elliptic orbit (an apogee
-    above the perigee) **perigee position** places perigee that many degrees
-    downrange of the site crossing.
+### Orbit
 
-**Orbit preset**
-:   Textbook orbits anchored by elements rather than a site: ISS,
-    Sun-synchronous, GPS / MEO, GTO, Molniya and GEO in the core catalog,
-    plus any a data pack adds. The ascending node sits over the **node
-    longitude** at the epoch (for GEO it is the station longitude). The
-    sun-synchronous preset keeps the inclination at the exact SSO value for
-    the altitude, sets the node from a **local time of ascending node**, and
-    offers the repeat-ground-track family (12–16 revs per day).
+**Shape**
+:   Perigee and apogee altitude and the inclination, each a number with a
+    slider under it. The altitude sliders are log-scaled from 120 to
+    50 000 km, so a low orbit keeps fine resolution and GEO is within reach;
+    the box takes any value. Tick **circular** to tie the apogee to the
+    perigee. The **orbit** picker fills the shape from a textbook preset —
+    ISS, Sun-synchronous, GPS / MEO, GTO, Molniya and GEO in the core
+    catalog, plus any a data pack adds; a badge then reads *preset*, or
+    *modified* once you have moved away from it. The sun-synchronous preset
+    keeps the inclination at the exact SSO value for the altitude, sets the
+    node from a **local time of ascending node**, and offers the
+    repeat-ground-track family (12–16 revs per day).
+
+**Anchored by**
+:   How the orbit is tied to the Earth at the epoch.
+
+    *Launch site* — the orbit plane passes over the site at the launch
+    epoch. Choose a site from the catalog, type coordinates, or **pick on
+    map** and click the map (Esc cancels); the picker then reads *custom
+    (lat, lon)*. Choose whether the site sits on the **ascending**
+    (northbound) or **descending** leg. The inclination can't be below the
+    site's latitude: the slider stops there, the hint says so, and picking a
+    site raises it if needed. For an elliptic orbit **perigee position**
+    places perigee that many degrees downrange of the site crossing.
+
+    *Node longitude* — no site: the ascending node sits over that longitude
+    at the epoch (for GEO it is the station longitude). A preset defined by
+    its elements (GTO, Molniya, GEO) switches to this anchor when picked.
 
 **File**
 :   A finished trajectory from a file: choose a stored file or upload one
@@ -42,25 +57,27 @@ the source is ready.
     path (untimed, sampled at a step you choose), one track per Placemark —
     which is what most tools export; other formats come from plugins.
 
-Plugins can add more sources; their buttons appear in the same row while the
+Plugins can add more sources; their chips appear in the same row while the
 plugin is on.
 
-## Shape and propagation
+## Epoch and propagation
 
-For orbit sources the form below the source panel sets:
+For orbit sources the block under the source panel sets:
 
-- **perigee altitude** (the slider covers low orbits; type higher values in
-  the box) and **apogee** (blank = circular);
-- **inclination**;
-- **epoch** (UTC) and **hours** to propagate;
+- **epoch** (UTC) as ISO text, `YYYY-MM-DD HH:MM` — a stamp from a log
+  pastes straight in (a `T`, seconds or a `Z` are fine); **now** resets it
+  and the calendar button opens the browser's picker;
+- **propagate**: a number of hours, days or revolutions of the current
+  orbit, or one of the quick spans (1 rev, 24 h, 7 d, 30 d);
 - **propagation mode**: *kepler + J2* (no drag) or *drag decay*, which asks
   for a **ballistic coefficient** β = m / (C<sub>d</sub>A) in kg/m². Plugins
   can add modes; slow ones run in the background with progress in the status
   bar.
 
-**plan orbit** computes it. The summary below the panels shows the launch
-site and azimuth (for a site), the period, revs per day and RAAN drift, and
-the orbital elements at the epoch.
+**plan orbit** computes it; the line under the button says what will be
+planned, and the button stays at the bottom of the panel as it scrolls. The
+summary below the panels shows the launch site and azimuth (for a site), the
+period, revs per day and RAAN drift, and the orbital elements at the epoch.
 
 ## The map
 

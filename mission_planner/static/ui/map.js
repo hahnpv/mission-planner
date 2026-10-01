@@ -558,11 +558,13 @@ function drawScene() {
     svg.classList.remove("dragging");
     if (!moved && ev.type === "pointerup") {
       const p = toMap(ev), ll = unproject(p.x, p.y);
-      if (ll) MP.fire(MP._clicks, "module click", ll.lat, ll.lon);
+      if (ll && mapPick) { const pick = mapPick; pickOnMap(null); pick.fn(ll.lat, ll.lon); }
+      else if (ll) MP.fire(MP._clicks, "module click", ll.lat, ll.lon);
     }
     down = null;
   };
   window.addEventListener("pointerup", pointerUp);
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape" && mapPick) pickOnMap(null); });
   window.addEventListener("pointercancel", pointerUp);
   // Distance and midpoint (client px) of the two pointers down.
   function pinchOf() {
@@ -597,4 +599,24 @@ function setProj(mode) {
   projMode = mode;
   view = { x:0, y:0, w:360 * S, h:180 * S };
   redraw();
+}
+
+// ------------------------------------------------------------ one-shot pick
+// The next click on the map or globe goes to fn(lat, lon) instead of the
+// modules' click hooks (the form's "pick on map" for a launch site).  Esc or
+// pickOnMap(null) cancels.  btnId: the button that armed it, shown pressed
+// with "click the map…" while armed.
+let mapPick = null;
+function pickOnMap(fn, btnId) {
+  if (mapPick?.btn) {
+    mapPick.btn.textContent = mapPick.label;
+    mapPick.btn.classList.remove("primary");
+  }
+  mapPick = fn ? { fn, btn: btnId ? $(btnId) : null } : null;
+  if (mapPick?.btn) {
+    mapPick.label = mapPick.btn.textContent;
+    mapPick.btn.textContent = "click the map…";
+    mapPick.btn.classList.add("primary");
+  }
+  $("map").classList.toggle("picking", !!fn);
 }

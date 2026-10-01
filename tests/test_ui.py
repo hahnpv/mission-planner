@@ -85,6 +85,8 @@ def page(browser, base_url):
 def plan(page, **fields):
     """Fill the orbit form and plan; returns the number of track samples."""
     page.fill("#epoch", EPOCH)
+    if "apo" in fields:  # the apogee field shows once the orbit isn't circular
+        page.uncheck("#circ")
     for sel, value in fields.items():
         page.fill(f"#{sel}", str(value))
     page.evaluate("() => { plan = null; }")
@@ -183,6 +185,54 @@ def test_sun_synchronous_preset_follows_the_altitude_and_the_ltan(page):
     page.select_option("#preset", "ISS")
     assert page.evaluate("() => document.getElementById('sso_rows').hidden")
     assert float(page.input_value("#inc")) == 51.6
+
+
+def test_orbit_form_presets_anchor_site_and_epoch(page):
+    """The orbit form: a preset fills the shape and shows as modified once
+    edited; the anchor switches between a launch site (typed or picked on
+    the map, with the inclination floor) and a node longitude; the epoch
+    reads ISO text in UTC."""
+    page.select_option("#preset", "Molniya")  # element-anchored: node anchor
+    assert page.evaluate("() => anchor === 'node' && !document.getElementById('aporow').hidden")
+    assert page.input_value("#apo") == "39868" and page.input_value("#nodelon") == "65"
+    assert page.inner_text("#presetbadge") == "preset"
+    page.fill("#peri", "600")
+    assert page.inner_text("#presetbadge") == "modified"
+    # An ISS-shaped orbit launched from a site: fill, then re-anchor.
+    page.select_option("#preset", "ISS")
+    assert page.evaluate("() => anchor === 'node'") and page.is_checked("#circ")
+    page.click('#anchorseg [data-anchor="site"]')
+    page.select_option("#site", "Kodiak")  # 57.4 N: inclination floor
+    assert "57.4" in page.inner_text("#incmin") and float(page.input_value("#inc")) == 57.5
+    assert "from Kodiak, ascending" in page.inner_text("#planhint")
+    page.click('#legseg [data-leg="descending"]')
+    page.fill("#sitelon", "-150")
+    assert page.input_value("#site") == "custom"
+    assert "custom (57.40°N 150.00°W)" in page.inner_text("#site option:checked")
+    # Pick on map: the next click lands in the coordinates, not in a module.
+    page.click("#sitepick")
+    assert page.evaluate(
+        "() => !!mapPick && document.getElementById('map').classList.contains('picking')"
+    )
+    page.evaluate(
+        "() => { window._tap = null; MP._clicks.push({ mod: 'passes', fn: () => { window._tap = 1; } }); }"
+    )
+    box = page.locator("#map").bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    assert page.evaluate("() => mapPick === null && window._tap === null")
+    assert page.input_value("#sitelat") != "57.4" and page.input_value("#site") == "custom"
+    # A bad epoch is refused before any request; a pasted ISO stamp is read.
+    page.fill("#epoch", "yesterday")
+    page.click("#plan")
+    assert "epoch" in page.inner_text("#status")
+    page.fill("#epoch", "2026-10-01T12:00:00Z")
+    page.dispatch_event("#epoch", "change")
+    assert page.input_value("#epoch") == "2026-10-01 12:00"
+    page.click('#horizon [data-h="1 revs"]')
+    assert page.input_value("#hours") == "1" and page.input_value("#hunit") == "revs"
+    n = plan(page)
+    assert 0 < n < 400  # one revolution at 30 s steps
+    assert page.evaluate("() => plan.summary.source === 'site' && plan.summary.site_lat < 60")
 
 
 def upload(page, body: bytes, name: str) -> str:
