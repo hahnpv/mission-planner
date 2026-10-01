@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from mission_planner import Orbit, Scene
+from mission_planner import Orbit
 from mission_planner.groundtrack import GroundTrack
 
 EPOCH = datetime(2026, 8, 21, 0, 0, tzinfo=timezone.utc)
@@ -72,29 +72,31 @@ def test_track_arrays_must_agree():
         GroundTrack(EPOCH, np.zeros(3), np.zeros(3), np.zeros(2), np.zeros(3))
 
 
+def test_time_must_not_run_backwards():
+    z = np.zeros(3)
+    with pytest.raises(ValueError, match="track mix runs backwards"):
+        GroundTrack(EPOCH, np.array([0.0, 10.0, 5.0]), z, z, z, label="mix")
+    # Round-off where a simulator's phases join is not a reversal.
+    GroundTrack(EPOCH, np.array([0.0, 10.0, 10.0 - 4.5e-13]), z, z, z)
+
+
+def test_a_naive_epoch_means_utc():
+    gt = straight_track(2)
+    gt.epoch = datetime(2026, 8, 21, 0, 0)
+    naive = GroundTrack(datetime(2026, 8, 21, 0, 0), gt.t, gt.lat, gt.lon, gt.alt)
+    assert naive.epoch == EPOCH and naive.epoch.tzinfo is timezone.utc
+    assert naive.to_json()["epoch_utc"] == "2026-08-21T00:00:00+00:00"
+    assert naive.passes(0.0, 0.0, within_km=10.0)[0]["ca_utc"] == "2026-08-21T00:00:00+00:00"
+
+
 def test_to_json_shape():
     orb = Orbit.circular(500.0, 45.0, epoch=EPOCH)
     gt = orb.ground_track(3600.0, 60.0)
     d = gt.to_json()
-    assert len(d["lat"]) == len(d["lon"]) == len(d["t"])
+    assert len(d["lat"]) == len(d["lon"]) == len(d["t"]) == len(d["alt_km"])
     assert max(map(abs, d["lat"])) <= 45.1
     assert max(map(abs, d["lon"])) <= 180.0
-
-
-def test_scene_roundtrip():
-    s = Scene(title="phasing demo")
-    s.track("vehicle", [0, 1], [10, 11], color="#2a78d6")
-    s.marker("delivery", 12.3, 45.6, symbol="target")
-    s.windows("options", ["utc", "dist_km"], [["2026-08-22T01:00Z", 120]])
-    doc = s.to_json()
-    s2 = Scene.from_json(doc)
-    assert s2.title == "phasing demo"
-    assert [layer["kind"] for layer in s2.layers] == ["track", "marker", "windows"]
-
-
-def test_scene_rejects_unknown_kind():
-    with pytest.raises(ValueError):
-        Scene().add({"kind": "nope"})
+    assert not {"id", "label", "parent", "color"} & set(d)  # absent, not null
 
 
 def test_heading_eastward_for_equatorial():

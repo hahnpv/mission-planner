@@ -46,7 +46,7 @@ from scipy.special import ive
 from .atmosphere import density, scale_height
 from .constants import ENTRY_INTERFACE_ALT, MU, OMEGA_E, RE
 from .groundtrack import GroundTrack
-from .orbit import Orbit, j2_secular, subpoint_from_orbital, wrap_pi
+from .orbit import Orbit, j2_secular, kepler_E, nu_from_E, subpoint_from_orbital
 from .timebase import add_seconds
 
 R_FLOOR = RE + ENTRY_INTERFACE_ALT
@@ -116,6 +116,11 @@ def propagate_decay(
             f"decay mode's King-Hele series needs e <= {MAX_ECCENTRICITY} (this orbit: "
             f"e = {orbit.e:.3f}) — use a full-sim plugin mode for more eccentric orbits"
         )
+    if orbit.a * (1.0 - orbit.e) < R_FLOOR:
+        raise ValueError(
+            f"decay mode starts above the {(R_FLOOR - RE) * 1e-3:.0f} km entry interface "
+            f"(this orbit's perigee: {(orbit.a * (1.0 - orbit.e) - RE) * 1e-3:.0f} km)"
+        )
 
     inc = orbit.inc
     y = np.array([orbit.a, orbit.e, orbit.m0, orbit.argp, orbit.raan])
@@ -123,7 +128,8 @@ def propagate_decay(
     ts, ys = [t], [y.copy()]
     entered = False
 
-    n_out = max(1, int(round(duration_s / dt_s)))
+    # The same samples as the Kepler track (orbit.ground_track's arange).
+    n_out = len(np.arange(0.0, float(duration_s) + 0.5 * dt_s, dt_s)) - 1
     for _ in range(n_out):
         t_next = t + dt_s
         while t < t_next - 1e-9:
@@ -157,15 +163,9 @@ def propagate_decay(
 
     t_arr = np.array(ts)
     a_arr, e_arr, m_arr, argp_arr, raan_arr = np.array(ys).T
-    # Position on the osculating ellipse of the mean elements (Newton on
-    # Kepler's equation, vectorized over the per-sample eccentricity).
-    mw = wrap_pi(m_arr)
-    E = mw + e_arr * np.sin(mw)
-    for _ in range(12):
-        E = E - (E - e_arr * np.sin(E) - mw) / (1.0 - e_arr * np.cos(E))
-    nu = (m_arr - mw) + 2.0 * np.arctan2(
-        np.sqrt(1 + e_arr) * np.sin(E / 2), np.sqrt(1 - e_arr) * np.cos(E / 2)
-    )
+    # Position on the osculating ellipse of the mean elements.
+    E = kepler_E(m_arr, e_arr, iterations=12)
+    nu = nu_from_E(E, e_arr)
     r = a_arr * (1.0 - e_arr * np.cos(E))
     lat, lon = subpoint_from_orbital(argp_arr + nu, raan_arr, inc, orbit.epoch, t_arr)
 

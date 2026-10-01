@@ -15,13 +15,10 @@
 // layers included) to the clipboard as a PNG, or downloads it where the
 // clipboard can't take images (an older browser, a non-localhost http page).
 
-// Where the focused vehicle is, in the earth's axes at the playback time
-// (the orbit view's ECI frame), in earth radii: sample k turned east by the
-// earth's rotation between its time and tCur.
-function inertialAt(tr, k) {
-  const turn = OMEGA_E_DEG * (tr.t[k] - tCur);
-  return vec(tr.lat[k], tr.lon[k] + turn).map(q => q * (1 + tr.alt_km[k] / RE_KM));
-}
+// Where a vehicle is at sample k, in the earth's axes at the playback time
+// (the orbit view's ECI frame, whatever frame that view is set to), in
+// earth radii.
+const inertialAt = (tr, k) => orbitVec(tr.lat[k], tr.lon[k], tr.alt_km[k], tr.t[k], "eci");
 const unit = v => { const m = Math.hypot(...v); return m > 1e-12 ? v.map(q => q / m) : null; };
 // The focused track's orbit normal (r x v) at the playback time, or null.
 function orbitNormal() {
@@ -140,11 +137,8 @@ async function takeScreenshot() {
   } catch (err) {
     let blob;
     try { blob = await png; } catch (e) { status(`screenshot failed: ${e.message}`, true); return "failed"; }
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `mission-planner-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    download(`mission-planner-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`,
+             blob, "image/png");
     status("the clipboard can't take images here: screenshot downloaded instead.");
     return "download";
   }

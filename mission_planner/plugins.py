@@ -93,7 +93,13 @@ CORE_STATIC = Path(__file__).parent / "static" / "modules"
 CORE_CATALOG = Path(__file__).parent / "data" / "catalog"
 CORE_MODES = ("kepler", "decay")
 CORE_SOURCES = ("site", "preset")  # launch site / element-anchored preset (planning.py)
-CORE_MCP_TOOLS = ("plan_orbit", "list_launch_sites", "show_scene", "show_plan")  # mcp_server.py
+CORE_MCP_TOOLS = (  # mcp_server.py
+    "plan_orbit",
+    "track_samples",
+    "list_launch_sites",
+    "show_scene",
+    "show_plan",
+)
 KINDS = ("orbit", "trajectory")
 
 # (key, builtin, loader) — loader returns the spec, or None for a helper file.
@@ -103,6 +109,24 @@ Source = tuple[str, bool, Callable[[], dict | None]]
 class PluginError(RuntimeError):
     """A plugin's own code raised while serving a request (the servers report
     it as a 500 that names the plugin, unlike a ValueError from bad input)."""
+
+
+_WHAT = {"sources": "source", "propagators": "mode", "file_readers": "file reader"}
+
+
+def call_plugin(key: str, item: str, fn: Callable, *args):
+    """Call `fn`, the `item` a plugin provides under spec key `key`: a
+    ValueError passes through (bad input, a 400); anything else becomes a
+    PluginError naming the plugin — a 500 that says whose bug it is."""
+    try:
+        return fn(*args)
+    except (ValueError, PluginError):  # the File source calls a reader: blame the reader
+        raise
+    except Exception as e:
+        owner = registry().owner_of(key, item)
+        raise PluginError(
+            f"{_WHAT.get(key, key)} {item!r} (plugin '{owner}') failed: {type(e).__name__}: {e}"
+        ) from e
 
 
 @dataclass
@@ -151,7 +175,7 @@ def _spec_error(spec) -> str | None:
     if not isinstance(spec, dict) or not isinstance(spec.get("name"), str) or not spec["name"]:
         return "spec must be a dict with a non-empty string 'name'"
     api = spec.get("api", 1)
-    if not isinstance(api, int) or api > API_VERSION:
+    if not isinstance(api, int) or isinstance(api, bool) or not 1 <= api <= API_VERSION:
         return f"targets plugin API {api!r}; this core provides {API_VERSION}"
     for key in ("title", "description", "js"):
         if key in spec and not isinstance(spec[key], str):
@@ -170,8 +194,10 @@ def _spec_error(spec) -> str | None:
         if key in spec and not _is_path(spec[key]):
             return f"'{key}' must be a path"
     tools = spec.get("mcp_tools", [])
-    if not isinstance(tools, (list, tuple)) or not all(callable(t) for t in tools):
-        return "'mcp_tools' must be a list of functions"
+    if not isinstance(tools, (list, tuple)) or not all(
+        callable(t) and isinstance(getattr(t, "__name__", None), str) for t in tools
+    ):
+        return "'mcp_tools' must be a list of named functions"
     ww = spec.get("works_with", ["orbit"])
     if not isinstance(ww, (list, tuple)) or not set(ww) <= set(KINDS):
         return f"'works_with' must be a list of {'/'.join(KINDS)}"
@@ -315,6 +341,12 @@ class Registry:
 
         for name in list(self.records):
             check(name, ())
+
+    def fail(self, name: str, error: str):
+        """Fail a loaded plugin after the fact (its blueprint would not register)
+        and make whatever requires it unavailable, as a load-time failure would."""
+        self.records[name].fail(error)
+        self._resolve()
 
     # ------------------------------------------------------------ run time
     def active(self, name: str) -> bool:

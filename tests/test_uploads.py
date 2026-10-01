@@ -2,15 +2,14 @@
 source that plans from an uploaded file end to end."""
 
 import io
+import json
 from datetime import datetime, timezone
 
 import numpy as np
 import pytest
 
-import mission_planner.server as server
 from mission_planner import uploads
 from mission_planner.groundtrack import GroundTrack
-from mission_planner.plugins import Registry, builtin_sources
 
 
 def test_put_is_content_addressed(tmp_path):
@@ -26,15 +25,32 @@ def test_put_is_content_addressed(tmp_path):
     assert uploads.put_file(f)["name"] == "local.h5"
 
 
-def test_list_newest_first_and_by_extension(monkeypatch):
+def test_store_defaults_to_the_xdg_cache(monkeypatch, tmp_path):
+    monkeypatch.delenv("MP_UPLOAD_DIR")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    assert uploads.upload_dir() == tmp_path / "xdg" / "mission-planner" / "uploads"
+    assert uploads.upload_dir().is_dir()
+
+
+def test_list_newest_first_and_by_extension():
     ids = [uploads.put_stream(io.BytesIO(n.encode()), n)["id"] for n in ("x.h5", "y.CSV")]
     # Same-second uploads: order by the stored time, which we make distinct.
     for uid, ts in zip(ids, ("2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00")):
-        p = uploads.path(uid).with_name(uid + ".json")
-        p.write_text(p.read_text().replace(uploads.info(uid)["uploaded_utc"], ts))
+        uploads.update_info(uid, uploaded_utc=ts)
     assert [x["id"] for x in uploads.list_uploads()] == ids[::-1]
     assert [x["name"] for x in uploads.list_uploads([".csv"])] == ["y.CSV"]
     assert uploads.list_uploads([".h5", ".hdf5"])[0]["name"] == "x.h5"
+
+
+def test_listing_skips_strays_and_a_lost_sidecar_still_describes_its_file(upload_dir):
+    uid = uploads.put_stream(io.BytesIO(b"kept"), "k.bin")["id"]
+    (upload_dir / "notes.json").write_text("{}")  # not an upload id
+    (upload_dir / ("f" * 24 + ".json")).write_text("{}")  # a sidecar whose data is gone
+    uploads.path(uid).with_name(uid + ".json").unlink()  # the data without its sidecar
+    assert [x["id"] for x in uploads.list_uploads()] == []  # listing goes by sidecars
+    assert uploads.info(uid) == {"id": uid, "name": uid, "size": 4, "uploaded_utc": None}
+    uploads.path(uid).with_name(uid + ".json").write_text("not json")
+    assert uploads.info(uid)["name"] == uid  # a corrupt sidecar: the same fallback
 
 
 @pytest.mark.parametrize("uid", ["", None, "../etc/passwd", "a" * 24 + "/x", "0" * 24])
@@ -55,6 +71,7 @@ def test_upload_routes(core_client):
     assert r.status_code == 200
     up = r.get_json()
     assert up["name"] == "run.h5" and up["size"] == 3
+    assert up["kind"] is None and "no active plugin" in up["kind_note"]  # no reader claims it
     assert core_client.get(f"/api/uploads/{up['id']}").get_json()["name"] == "run.h5"
     assert [x["id"] for x in core_client.get("/api/uploads?ext=.h5").get_json()] == [up["id"]]
     assert core_client.get("/api/uploads?ext=.csv").get_json() == []
@@ -72,17 +89,13 @@ def _from_file(a):
     return gt, {"title": uploads.info(a["upload"])["name"]}
 
 
-def test_trajectory_source_plans_from_an_upload(monkeypatch):
-    import mission_planner.plugins as plugins
-
+def test_trajectory_source_plans_from_an_upload(app_with):
     spec = {
         "api": 1,
         "name": "fromfile",
         "sources": {"ff": {"fn": _from_file, "label": "file", "kind": "trajectory"}},
     }
-    reg = Registry([*builtin_sources(), ("fromfile", False, lambda: spec)])
-    monkeypatch.setattr(plugins, "_REGISTRY", reg)
-    client = server.create_app().test_client()
+    client, _ = app_with(spec)
     body = b"0 10 20 1000\n60 11 21 900\n"
     up = client.post("/api/uploads", data={"file": (io.BytesIO(body), "t.txt")}).get_json()
     res = client.get(f"/api/plan?source=ff&upload={up['id']}").get_json()
@@ -107,3 +120,7 @@ def test_delete(core_client, upload_dir):
     assert core_client.delete("/api/uploads/..%2Fx").status_code == 404
     # Same content again: same id, back in business.
     assert uploads.put_stream(io.BytesIO(b"gone soon"), "g.h5")["id"] == up["id"]
+    assert (
+        json.loads(uploads.path(up["id"]).with_name(up["id"] + ".json").read_text())["name"]
+        == "g.h5"
+    )

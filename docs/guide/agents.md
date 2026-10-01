@@ -42,7 +42,7 @@ starts, so restart it after switching plugins.
 | `perigee_km`, `apogee_km` | — | an ellipse instead of `alt_km` |
 | `perigee_offset_deg` | 0 | perigee this many degrees downrange of the site crossing |
 | `inc_deg` | 51.6 | inclination |
-| `ascending` | true | the site on the northeast-going leg |
+| `ascending` | true | the site on the northbound leg |
 | `node_lon_deg`, `argp_deg` | 0, 0 | for `site=""`: the ascending node's longitude at the epoch (GEO: the station) and the argument of perigee |
 | `epoch_utc` | now | ISO 8601 |
 | `hours` | 24 (48 for passes) | horizon; the sample step coarsens with it |
@@ -61,7 +61,11 @@ plan_orbit(site="", alt_km=35786, inc_deg=0, node_lon_deg=-100)                 
 the UI must be running (`python -m mission_planner.server`). The open tab
 updates at once, over server-sent events. `show_plan` puts a real plan on
 screen — the timed track with playback, the display window and every panel —
-exactly as if the user had planned it in the form.
+exactly as if the user had planned it in the form; the plan carries the
+`args` that made it, so the panels ask the server about that very plan.
+Each scene version is taken up once: a reconnect that re-announces the
+current version neither re-applies its plan nor brings back a scene that a
+plan made in the form since has replaced.
 
 ## Scenes
 
@@ -85,15 +89,16 @@ A scene is a JSON document the UI knows how to draw:
 | `track` | `name, lat[], lon[]`, optional `color, width, dash` |
 | `marker` | `name, lat, lon`, optional `color, symbol` (`dot`, `target` or `site`) |
 | `polygon` | `name, lat[], lon[]`, optional `color, fill` |
-| `label` | `text, lat, lon`, optional `color` |
+| `label` | `text` (required), `lat, lon`, optional `color` |
 | `windows` | `name, columns[], rows[][]` — drawn as a table in the legend |
 
 Angles are degrees. Unknown fields pass through untouched, so newer scenes
 still load on older servers; a malformed scene is rejected with a reason.
 
-A scene may also carry **`plan`**: a whole `/api/plan` payload. The UI then
-shows it as its own plan, with the layers as annotations; they are cleared
-when the user plans something else. In Python:
+A scene may also carry **`plan`**: a whole `/api/plan` payload (its `track`,
+and each of `tracks`, must have `t`, `lat`, `lon` and `alt_km` lists of two
+or more samples). The UI then shows it as its own plan, with the layers as
+annotations; they are cleared when the user plans something else. In Python:
 
 ```python
 from mission_planner import Scene, planning
@@ -108,12 +113,13 @@ sc.to_json()      # POST this to /api/scene
 The web UI is a client of a small JSON API, and so can anything else. Every
 error is JSON `{"error": "..."}`: 400 for bad input (with the reason), 404 or
 409 for something missing or not switchable, 500 for a failure inside the
-planner or a plugin.
+planner or a plugin (named in the message).
 
 ### Planning
 
-`GET /api/plan?<args>` returns `{summary, track}` — and `tracks`, `primary`
-for a plan with several tracks.
+`GET /api/plan?<args>` returns `{summary, track, args}` — and `tracks`,
+`primary` for a plan with several tracks. `args` is the request's query args
+as strings, so a client can ask the modules' routes about the same plan.
 
 | arg | for | meaning |
 |---|---|---|
@@ -131,15 +137,16 @@ curl 'http://127.0.0.1:3030/api/plan?site=Vandenberg&hp=550&inc=97.6&hours=6'
 ```
 
 `POST /api/plan_job?<args>` runs the same plan in the background (for slow
-plugin modes) and answers `{job_id}`; poll `GET /api/plan_job/<id>` until it is
-done. A track is capped at 200,000 samples; ask for fewer hours or a larger
-`dt` beyond that.
+plugin modes) and answers `{job_id}`; poll `GET /api/plan_job/<id>` until its
+`status` is `done` (the plan payload, plus `elapsed_s`, the run time) or
+`error`. A track is capped at 200,000 samples; ask for fewer hours or a
+larger `dt` beyond that.
 
 ### Built-in analysis
 
 | route | returns |
 |---|---|
-| `GET /api/passes?<plan args>&tgt_lat=&tgt_lon=&within_km=` | `{n, passes}` for the plan |
+| `GET /api/passes?<plan args>&tgt_lat=&tgt_lon=&within_km=` | `{n, passes}` for the plan; on a multi-track plan the passes of every track, in time order on the first track's clock, each with `track` (id) and `label` |
 | `GET /api/maneuvers/budget?alt1=&inc1=&alt2=&inc2=&lead=` | the maneuver budget |
 
 ### Catalog, files, plugins, scenes
@@ -149,7 +156,7 @@ done. A track is capped at 200,000 samples; ask for fewer hours or a larger
 | `GET /api/sites`, `/api/presets`, `/api/overlays` | the catalog: core data plus active data packs |
 | `POST /api/uploads` (multipart `file`) | store a file; answers its `id` and the plugin reader that claims it (`kind`) |
 | `GET /api/uploads[?ext=.h5]`, `GET`/`DELETE /api/uploads/<id>` | list, describe, remove stored files |
-| `GET /api/files/<id>/inspect` | what the File source panel shows for a stored file |
+| `GET /api/files/<id>/inspect` | what the File source panel shows for a stored file (404 for an unknown id) |
 | `GET /api/modules`, `POST /api/modules/<name>` `{"enabled": bool}` | plugins: status and live switches |
 | `POST /api/scene`, `GET /api/scene` | push or read the scene on display |
 | `GET /api/events` | server-sent events: a message whenever a new scene arrives |

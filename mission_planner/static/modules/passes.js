@@ -42,14 +42,20 @@ MP.register({
       ctx.redraw();
     }
 
+    // Track labels may come from a file: escape them before they go into HTML.
+    const escHtml = s => String(s).replace(/[&<>"]/g,
+      ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
     function render() {
+      // A multi-track plan: the passes of every vehicle, so say whose each is.
+      const multi = (ctx.getPlan()?.tracks || []).length > 1;
       const rows = list.map((p, i) =>
-        `<tr data-i="${i}"><td>${p.ca_utc.replace("T", " ").slice(5, 16)}</td>`
+        `<tr data-i="${i}">${multi ? `<td>${escHtml(p.label || p.track)}</td>` : ""}`
+        + `<td>${p.ca_utc.replace("T", " ").slice(5, 16)}</td>`
         + `<td>${p.min_dist_km}</td>`
         + `<td>${p.direction[0] === "a" ? "asc" : "desc"}</td>`
         + `<td>${p.alt_km}</td></tr>`).join("");
       $("pa_table").innerHTML = rows
-        ? "<table><thead><tr><th>closest utc</th><th>km</th><th>leg</th>"
+        ? `<table><thead><tr>${multi ? "<th>track</th>" : ""}<th>closest utc</th><th>km</th><th>leg</th>`
           + `<th>alt</th></tr></thead><tbody>${rows}</tbody></table>`
         : "<div class='hint'>no passes in horizon.</div>";
       $("pa_table").querySelectorAll("tbody tr").forEach(r => r.onclick = () => {

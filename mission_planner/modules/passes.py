@@ -22,18 +22,27 @@ try:
 
     @bp.route("/api/passes")
     def _passes_route():
-        try:
-            a = request.args
-            if "tgt_lat" not in a or "tgt_lon" not in a:
-                raise ValueError("tgt_lat and tgt_lon are required")
-            _, _, gt = track_from_args(a)
-            win = gt.passes(
-                req_float(a, "tgt_lat", 0.0),
-                req_float(a, "tgt_lon", 0.0),
-                within_km=req_float(a, "within_km", 500.0),
-            )
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+        """Passes of every track of the plan the query args describe, in time
+        order; on a multi-track plan each pass names its `track` (and `label`),
+        with times on the first track's clock as the plan's are."""
+        a = request.args
+        if "tgt_lat" not in a or "tgt_lon" not in a:
+            raise ValueError("tgt_lat and tgt_lon are required")
+        _, _, gt = track_from_args(a)
+        tracks = gt if isinstance(gt, (list, tuple)) else [gt]
+        lat, lon = req_float(a, "tgt_lat", 0.0), req_float(a, "tgt_lon", 0.0)
+        within = req_float(a, "within_km", 500.0)
+        win = []
+        for i, tr in enumerate(tracks):
+            shift = (tr.epoch - tracks[0].epoch).total_seconds()
+            for p in tr.passes(lat, lon, within_km=within):
+                if len(tracks) > 1:
+                    p["ca_t_s"] = round(p["ca_t_s"] + shift, 1)
+                    p["track"] = tr.id or f"track{i + 1}"
+                    if tr.label:
+                        p["label"] = tr.label
+                win.append(p)
+        win.sort(key=lambda p: p["ca_t_s"])
         return jsonify({"n": len(win), "passes": win})
 except ImportError:  # library use without flask
     bp = None

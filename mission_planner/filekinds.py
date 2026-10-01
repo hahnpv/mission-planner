@@ -18,7 +18,7 @@ from __future__ import annotations
 import sys
 
 from . import uploads
-from .plugins import PluginError, registry
+from .plugins import call_plugin, registry
 
 
 def _detect(rid: str, rp: dict, path) -> bool:
@@ -69,15 +69,7 @@ def reader_for(uid) -> tuple[str, dict, dict]:
 
 
 def _call(rid: str, fn, *a):
-    try:
-        return fn(*a)
-    except ValueError:
-        raise
-    except Exception as e:  # the reader's bug: a 500 that names its plugin
-        owner = registry().owner_of("file_readers", rid)
-        raise PluginError(
-            f"file reader {rid!r} (plugin '{owner}') failed: {type(e).__name__}: {e}"
-        ) from e
+    return call_plugin("file_readers", rid, fn, *a)
 
 
 def inspect(uid) -> dict:

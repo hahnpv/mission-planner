@@ -19,7 +19,7 @@ the source is ready.
 **Launch site**
 :   An orbit whose plane passes over a site at the launch epoch. Choose a
     site from the catalog or *custom…* with your own latitude and longitude,
-    and whether the site sits on the **ascending** (northeast-going) or
+    and whether the site sits on the **ascending** (northbound) or
     **descending** leg. The inclination can't be below the site's latitude,
     and picking a site raises it if needed. For an elliptic orbit (an apogee
     above the perigee) **perigee position** places perigee that many degrees
@@ -72,7 +72,8 @@ The **View** menu switches the projection:
 | **Globe** | the map on a sphere | drag to rotate, wheel zooms |
 | **Orbit** | the orbit in space around the Earth, scaled to fit — best for high orbits; in the **ECI** (inertial) or **ECEF** (Earth-fixed) frame, optionally with the ground trace | drag to rotate, wheel zooms |
 
-Double-click resets the zoom in every view.
+Double-click resets the zoom in every view. On a touch screen a finger drags,
+two fingers pinch-zoom and a double tap resets.
 
 ### Camera views
 
@@ -85,12 +86,17 @@ switch to the orbit view.
 | **N pole** / **S pole** | down on a pole |
 | **face-on** | square to the orbit plane of the track in focus — the orbit's true shape, the Earth at a focus |
 | **edge-on** | in the orbit plane, along the line of nodes — the plane as a line tilted by the inclination |
-| **vehicle** | straight down on the vehicle (on the flat map: centres the map on it) |
-| **sun** | from the sun — the day side |
+| **vehicle** | straight down on the vehicle (on the flat map: centres the map on its longitude) |
+| **sun** | from the sun — the lit hemisphere |
 
 With **follow** ticked, the view stays aimed as playback runs: the orbit
 plane turns under the Earth's axes, and the vehicle view becomes a chase
 camera. Dragging the map lets go of the view.
+
+**take screenshot**, in the same bar, copies the map, globe or orbit pane
+as a PNG to the clipboard — plugin layers included, but not the legend of an
+agent scene, which is not part of the drawing — or downloads it where the
+clipboard can't take images.
 
 ![Face-on to a Molniya orbit](../assets/ui-camera-face.png)
 
@@ -125,7 +131,10 @@ vehicle whose trajectory branches. The **in focus** picker below the plan
 button lists them. The panels, markers and modules work on the track in
 focus; the others are drawn faintly. Click a vehicle on the map to focus it.
 A track may carry a colour of its own (a branch drawn in red, say); it stays
-plainly visible whether it's in focus or not.
+plainly visible whether it's in focus or not. Each track exists only within
+its own time span: outside it the vehicle's dot and footprint are gone, in
+focus or not, and a focused track that lies wholly outside the display
+window draws nothing.
 
 ## Built-in panels
 
@@ -135,8 +144,10 @@ The panels under the form are modules. They draw on the map only while open.
 :   Click the map (or type a latitude, longitude) to set a target and a miss
     distance; the table lists every overflight window with UTC times, the
     closest approach, heading and leg. Click a row to jump playback there.
-    A *pass* here is the ground track coming within that distance of the
-    target — not line of sight; the horizon footprint answers that.
+    On a plan with several tracks it lists every vehicle's passes, with a
+    **track** column. A *pass* here is the ground track coming within that
+    distance of the target — not line of sight; the horizon footprint
+    answers that.
 
 **Maneuver planner**
 :   Impulsive budgets between two circular orbits: Hohmann legs, the plane
@@ -160,13 +171,15 @@ also the worked example of the [plugin tutorial](../tutorial.md).
 :   Place a station (**place on map**, then click; Esc cancels) or type its
     coordinates, and set an **elevation mask** (10° by default). The panel
     says which vehicles are above the mask now, sums up the coverage (number
-    of contacts, time in contact, longest gap) and lists the contact windows
-    — AOS, duration, maximum elevation, azimuth from AOS to LOS; click one to
-    jump there. The map shows the station and a dashed ring: while the
-    vehicle's subpoint is inside it, the vehicle is above the mask. A
-    View-menu toggle limits the horizon footprints to the vehicles above the
-    mask. The station is remembered in this browser; agents get the same
-    answers from the `ground_contacts` MCP tool.
+    of contacts, time in contact with at least one vehicle, longest gap) and
+    lists the contact windows — AOS, duration, maximum elevation, azimuth
+    from AOS to LOS; click one to jump there. The map shows the station and
+    a dashed ring: while the vehicle's subpoint is inside it, the vehicle is
+    above the mask. A View-menu toggle limits the horizon footprints to the
+    vehicles above the mask. The station is remembered in this browser. The
+    panel follows whatever plan is on screen; the `ground_contacts` MCP tool
+    plans a Kepler orbit of its own from the shared orbit keywords (no
+    `mode`/`beta`).
 
 ## Menus
 

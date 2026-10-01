@@ -23,6 +23,14 @@ const MP = {
   on: name => MP.active(name)
     && (!plan || (MP.mods[name]?.works_with ?? ["orbit"]).includes(plan.summary.kind ?? "orbit")),
   live: hooks => hooks.filter(h => MP.on(h.mod)).map(h => h.fn),
+  // Call every live hook of a list with `args`; one module's error is logged
+  // (`what` names the hook) and never stops the others or the caller.
+  fire(hooks, what, ...args) {
+    for (const fn of MP.live(hooks)) {
+      try { fn(...args); }
+      catch (e) { console.error(what + ":", e); }
+    }
+  },
   register(mod) {
     // loadModules tags each module's <script> with its name.
     const name = document.currentScript?.dataset.module ?? mod.title;
@@ -35,7 +43,7 @@ const MP = {
     box.className = "modbox";
     if (mod.open || !mod.html) box.open = true;
     box.hidden = !MP.on(name);
-    box.innerHTML = `<summary class="lbl">${mod.title}</summary>` + (mod.html || "");
+    box.innerHTML = `<summary class="lbl">${escHtml(mod.title)}</summary>` + (mod.html || "");
     if (mod.html) $("modulebox").appendChild(box);
     rec.box = box;
     const hook = (list, drawsOnMap) => fn => {
@@ -48,15 +56,20 @@ const MP = {
         status,
         redraw,
         getPlan: () => plan,
-        // Current orbit query string, so a module can ask the backend about
-        // the very orbit the panel describes (mode/beta included).
-        planArgs: () => new URLSearchParams(args()),
+        // The query args that produced the current plan (the payload's
+        // `args`; a plan pushed by an agent carries them too), so a module can
+        // ask the backend about the very plan on screen -- not the form,
+        // which may have moved on.  Before any plan: the form's.
+        planArgs: () => new URLSearchParams(plan?.args ?? args()),
         // The module's own collapsible section.  A module that puts graphics
         // on the map should draw nothing while its panel is closed, and can
         // wake up (fetch, redraw) when the user opens it.  An inactive
         // plugin's panel counts as closed.
         isOpen: () => MP.on(name) && box.open,
-        onToggle: cb => box.addEventListener("toggle", () => cb(box.open)),
+        onToggle: cb => box.addEventListener("toggle", () => {
+          try { cb(box.open); }
+          catch (e) { console.error(`plugin ${name} onToggle:`, e); }
+        }),
         onPlan: hook(MP._onPlan, false),
         // Map layers get the layer context documented at layerCtx (map.js).
         onDraw: hook(MP._layers, true),
@@ -152,7 +165,10 @@ const MP = {
       if (rec.catalog && was[m.name] !== undefined && was[m.name] !== rec.active)
         catalogChanged = true;
     }
-    if (catalogChanged) await refreshCatalogs();
+    if (catalogChanged) {
+      try { await refreshCatalogs(); }
+      catch (e) { status("catalog refresh failed: " + e.message, true); }
+    }
     buildModeSelect();
     renderSources();
     syncModules();
@@ -161,7 +177,7 @@ const MP = {
     if (plan)
       for (const m of list)
         if (MP.on(m.name) && was[m.name] === false)
-          MP._onPlan.filter(h => h.mod === m.name).forEach(h => h.fn(plan));
+          MP.fire(MP._onPlan.filter(h => h.mod === m.name), "module onPlan", plan);
     redraw();
   },
   async toggle(name, enabled) {
@@ -249,20 +265,22 @@ async function loadModules() {
 }
 
 // ------------------------------------------------------------ scene push (SSE)
+// Each scene version is taken up once: a reconnect (the server restarted, the
+// laptop slept) re-announces the current version, which must neither undo a
+// plan made in the form since nor bring back a scene that plan dismissed.
 // A scene with a `plan` (scene.py; the show_plan tool) becomes the plan on
-// display, once per scene version: a reconnect re-announces the current
-// version, which must not undo a plan made in the form since.
-let scenePlanVersion = -1;
+// display.
+let sceneVersion = -1;
 function listenScenes() {
   const es = new EventSource("/api/events");
   es.onmessage = async () => {
     try {
       const res = await api("/api/scene");
       if (res.error) throw new Error(res.error);
-      if (!res.scene) return;
+      if (!res.scene || res.version === sceneVersion) return;
+      sceneVersion = res.version;
       scene = res.scene;
-      if (scene.plan && res.version !== scenePlanVersion) {
-        scenePlanVersion = res.version;
+      if (scene.plan) {
         planSeq++;   // a plan request still in flight must not replace it
         applyPlan(scene.plan);
         status(`showing ${scene.title || "a pushed plan"} (from an agent)`);

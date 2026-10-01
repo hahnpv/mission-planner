@@ -46,8 +46,8 @@ def _grid() -> tuple[np.ndarray, np.ndarray]:
 def density(alt_m):
     """US76 density [kg/m^3] at geometric altitude [m]; scalar or array.
 
-    Clamped to sea-level density below the table; above 1000 km the last
-    decade of the table is extrapolated log-linearly (a ~270 km scale height),
+    Clamped to the table's bottom value (-1 km) below it; above 1000 km the
+    table's last step is extrapolated log-linearly (a ~240 km scale height),
     so high orbits see a density that keeps falling rather than the 1000 km
     value frozen — still a rough guess, but 10-100x closer than the clamp.
     """

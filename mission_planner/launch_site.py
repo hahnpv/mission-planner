@@ -49,8 +49,9 @@ def launch_azimuth(
 
     Inertial spherical-trig azimuth (sin az = cos i / cos lat), corrected for
     Earth-rotation velocity when `v_orbit` [m/s] is given.  `ascending` picks
-    the northeast-going solution; False gives the southeast-going one.
-    Raises ValueError when the inclination is unreachable (inc < |lat|).
+    the northbound solution (northeast for a prograde orbit, northwest for a
+    retrograde one); False gives the southbound one.  Raises ValueError when
+    the inclination is unreachable (|lat| <= inc <= 180 - |lat| is needed).
     """
     lat = math.radians(lat_deg)
     inc = math.radians(inc_deg)
@@ -58,11 +59,11 @@ def launch_azimuth(
     if abs(s) > 1.0:
         raise ValueError(
             f"inclination {inc_deg:.2f} deg unreachable from latitude "
-            f"{lat_deg:.2f} deg (need inc >= |lat|)"
+            f"{lat_deg:.2f} deg (need |lat| <= inc <= 180 - |lat|)"
         )
-    az_inertial = math.asin(s)  # northeast branch, -pi/2..pi/2
+    az_inertial = math.asin(s)  # northbound branch, -pi/2..pi/2
     if not ascending:
-        az_inertial = math.pi - az_inertial  # southeast branch
+        az_inertial = math.pi - az_inertial  # southbound branch
     if v_orbit is None:
         return math.degrees(az_inertial) % 360.0
     # Rotating-Earth correction: subtract the eastward pad velocity.

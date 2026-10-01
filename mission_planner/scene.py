@@ -30,6 +30,10 @@ from numbers import Real
 _KINDS = {"track", "marker", "polygon", "windows", "label"}
 
 
+def _is_number(x) -> bool:
+    return isinstance(x, Real) and not isinstance(x, bool)  # bool is an int to Python
+
+
 def _check(layer: dict) -> dict:
     kind = layer.get("kind")
     if kind not in _KINDS:
@@ -37,13 +41,12 @@ def _check(layer: dict) -> dict:
 
     def angles(key):
         v = layer.get(key)
-        if not isinstance(v, (list, tuple)) or not all(isinstance(x, Real) for x in v):
+        if not isinstance(v, (list, tuple)) or not all(_is_number(x) for x in v):
             raise ValueError(f"{kind} layer {key!r} must be a list of numbers")
         return v
 
     def angle(key):
-        v = layer.get(key)
-        if not isinstance(v, Real):
+        if not _is_number(layer.get(key)):
             raise ValueError(f"{kind} layer {key!r} must be a number")
 
     if kind in ("track", "polygon"):
@@ -52,6 +55,8 @@ def _check(layer: dict) -> dict:
     elif kind in ("marker", "label"):
         angle("lat")
         angle("lon")
+        if kind == "label" and not isinstance(layer.get("text"), str):
+            raise ValueError("label layer needs a 'text' string")
     else:  # windows
         cols, rows = layer.get("columns"), layer.get("rows")
         if not isinstance(cols, (list, tuple)) or not isinstance(rows, (list, tuple)):
@@ -64,11 +69,13 @@ def _check(layer: dict) -> dict:
 def _check_track(tr, what: str) -> None:
     if not isinstance(tr, dict):
         raise ValueError(f"scene plan {what} must be an object")
-    cols = [tr.get(k) for k in ("t", "lat", "lon")]
+    cols = [tr.get(k) for k in ("t", "lat", "lon", "alt_km")]
     if not all(isinstance(c, list) for c in cols):
-        raise ValueError(f"scene plan {what} needs t, lat and lon lists")
-    if not len(cols[0]) == len(cols[1]) == len(cols[2]) >= 2:
-        raise ValueError(f"scene plan {what}: t/lat/lon need two or more samples each, same length")
+        raise ValueError(f"scene plan {what} needs t, lat, lon and alt_km lists")
+    if not (len(cols[0]) == len(cols[1]) == len(cols[2]) == len(cols[3]) >= 2):
+        raise ValueError(
+            f"scene plan {what}: t/lat/lon/alt_km need two or more samples each, same length"
+        )
 
 
 def _check_plan(plan) -> dict:

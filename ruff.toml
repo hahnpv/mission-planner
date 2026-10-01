@@ -1,7 +1,9 @@
 # Ruff: `ruff check .` / `ruff format .` from the repo root.
 target-version = "py312"
 line-length = 100
-extend-exclude = ["**/__pycache__"]
+# *.md: ruff >= 0.16 formats the code blocks in Markdown too, which would
+# strip the aligned comments in the docs' examples.
+extend-exclude = ["**/__pycache__", "*.md"]
 
 [lint]
 # pyflakes, pycodestyle errors/warnings, import sorting.

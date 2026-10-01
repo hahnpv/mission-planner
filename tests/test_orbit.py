@@ -7,7 +7,7 @@ import pytest
 from mission_planner import SITES, Orbit
 from mission_planner.constants import MU
 from mission_planner.launch_site import LaunchSite, launch_azimuth
-from mission_planner.orbit import M_from_nu, kepler_E, nu_from_E, wrap_pi
+from mission_planner.orbit import M_from_nu, kepler_E, nu_from_E, sma_ecc_from_apsides, wrap_pi
 
 EPOCH = datetime(2026, 8, 21, 0, 0, tzinfo=timezone.utc)
 
@@ -52,11 +52,31 @@ def test_kepler_helpers_round_trip():
         assert np.abs(wrap_pi(back - M)).max() < 1e-12
 
 
+def test_kepler_helpers_take_a_per_sample_eccentricity_and_keep_whole_turns():
+    # A decaying orbit's e changes sample by sample: e may be an array.
+    M = np.array([0.5, 0.5, 7.0, 7.0 + 4 * math.pi])
+    e = np.array([0.0, 0.3, 0.3, 0.3])
+    E = kepler_E(M, e)
+    assert E[0] == 0.5 and E[1] == kepler_E(0.5, 0.3) and E[3] == pytest.approx(E[2] + 4 * math.pi)
+    nu = nu_from_E(E, e)
+    assert nu[0] == 0.5 and nu[1] == nu_from_E(E[1], 0.3)
+    assert nu[3] == pytest.approx(nu[2] + 4 * math.pi)  # the turns survive: nu is continuous
+    assert isinstance(nu_from_E(1.0, 0.1), float) and isinstance(kepler_E(1.0, 0.1), float)
+
+
 def test_wrap_pi_range():
     xs = np.array([-math.pi, math.pi, 3 * math.pi, -1e-12, 1e6 * math.pi])
     w = wrap_pi(xs)
     assert np.all(w >= -math.pi) and np.all(w < math.pi)
     assert wrap_pi(math.pi) == -math.pi and wrap_pi(0.5) == 0.5
+
+
+def test_apsides_below_the_earth_s_centre_are_rejected():
+    a, e = sma_ecc_from_apsides(-200.0, 400.0)  # a deorbit ellipse: fine
+    assert e > 0 and a < 6378137.0 + 400e3
+    assert sma_ecc_from_apsides(400.0, 300.0) == sma_ecc_from_apsides(400.0, 400.0)  # apogee raised
+    with pytest.raises(ValueError, match="below the Earth's centre"):
+        sma_ecc_from_apsides(-6400.0, 400.0)
 
 
 def test_from_launch_site_starts_over_site():
@@ -94,9 +114,11 @@ def test_equatorial_site_can_launch_into_an_equatorial_orbit():
         Orbit.from_launch_site(LaunchSite("x", 1.0, 0.0), 400.0, 0.0, epoch=EPOCH)
 
 
-def test_from_launch_site_rejects_low_inclination():
-    with pytest.raises(ValueError):
+def test_from_launch_site_rejects_unreachable_inclinations():
+    with pytest.raises(ValueError, match="cannot pass over"):
         Orbit.from_launch_site(SITES["Vandenberg"], 400.0, 20.0, epoch=EPOCH)
+    with pytest.raises(ValueError, match="cannot pass over"):  # retrograde: 180 - |lat| at most
+        Orbit.from_launch_site(SITES["Vandenberg"], 400.0, 160.0, epoch=EPOCH)
 
 
 def test_launch_azimuth_due_east():
@@ -110,6 +132,10 @@ def test_launch_azimuth_due_east():
     az_rotating = launch_azimuth(28.5, 51.6, v_orbit=7670.0)
     assert abs(az_inertial - 45.0) < 0.5
     assert az_rotating < az_inertial - 1.0
+    # The southbound leg mirrors the northbound one about east.
+    assert launch_azimuth(28.5, 51.6, ascending=False) == pytest.approx(180.0 - az_inertial)
+    with pytest.raises(ValueError, match="unreachable"):
+        launch_azimuth(60.0, 20.0)
 
 
 def test_orbit_launch_azimuth_uses_the_injection_speed():
@@ -228,7 +254,17 @@ def test_argument_of_latitude_and_mean_anomaly():
     assert orb.mean_anomaly(orb.period) - orb.m0 == pytest.approx(2 * math.pi, rel=1e-12)
 
 
-def test_summary_has_all_six_elements():
+def test_argument_of_latitude_is_continuous_on_an_elliptic_orbit():
+    # The true anomaly keeps its whole turns, so u counts revolutions
+    # instead of wrapping at every perigee passage.
+    orb = Orbit.from_elements(300.0, 3000.0, 51.6, EPOCH, argp_deg=90.0, nu0_deg=30.0)
+    u = orb.argument_of_latitude(np.array([0.0, orb.nodal_period]))
+    assert u[1] - u[0] == pytest.approx(2 * math.pi, rel=1e-3)  # one turn, node to node
+    uu = orb.argument_of_latitude(np.linspace(0.0, 3 * orb.period, 3000))
+    assert np.all(np.diff(uu) > 0) and uu[-1] - uu[0] == pytest.approx(6 * math.pi, rel=1e-3)
+
+
+def test_summary_has_the_elements():
     orb = Orbit.from_launch_site(
         SITES["Kourou"],
         inc_deg=6.0,
@@ -238,18 +274,10 @@ def test_summary_has_all_six_elements():
         perigee_offset_deg=15.0,
     )
     s = orb.summary()
-    for k in ("a_km", "e", "inc_deg", "raan_deg", "argp_deg", "nu0_deg", "nodal_period_s"):
-        assert k in s
+    assert set(s) >= {"a_km", "e", "inc_deg", "raan_deg", "argp_deg", "nu0_deg", "nodal_period_s"}
     assert s["e"] == pytest.approx(0.7283, abs=0.001)  # 250x35786 GTO
     assert s["nu0_deg"] == pytest.approx(-15.0, abs=0.01)
     assert 0.0 <= s["raan_deg"] < 360.0 and 0.0 <= s["argp_deg"] < 360.0
-
-
-def test_circular_backward_compatible():
-    site = SITES["Cape Canaveral / KSC"]
-    a = Orbit.from_launch_site(site, 400.0, 28.5, epoch=EPOCH)
-    b = Orbit.from_launch_site(site, inc_deg=28.5, epoch=EPOCH, perigee_km=400.0, apogee_km=400.0)
-    assert a == b
 
 
 def test_ground_track_rejects_bad_steps():

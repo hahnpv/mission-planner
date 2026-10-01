@@ -15,6 +15,8 @@ MP.register({
         <input id="sso_ltan" type="number" step="0.5" min="0" max="24" value="10.5">
       </div>`);
     const $s = id => el.querySelector("#sso_" + id);
+    // Its own constants, like a plugin would have (km, km^3/s^2).
+    const RE_KM = 6378.137, MU_KM = 398600.4418, J2 = 1.08262668e-3, DEG = Math.PI / 180;
     let on = false, variants = [];
 
     // The sun-synchronous inclination [deg] for a perigee/apogee altitude pair

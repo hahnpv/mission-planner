@@ -3,9 +3,10 @@
 // (plugins.js), the Plugins menu lives there too.
 const menubar = new Menubar($("menubar"));
 
-function download(name, text, type) {
+// Save `data` (a string or a Blob) as a file named `name`.
+function download(name, data, type) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.href = URL.createObjectURL(new Blob([data], { type }));
   a.download = name;
   a.click();
   // Revoke once the browser has had a chance to start the download.

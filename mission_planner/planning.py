@@ -12,6 +12,7 @@ turn it into HTTP 400 / a tool error).
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 import numpy as np
@@ -19,7 +20,7 @@ import numpy as np
 from .constants import RE
 from .launch_site import SITES, LaunchSite
 from .orbit import Orbit
-from .plugins import CORE_SOURCES, PluginError
+from .plugins import CORE_SOURCES
 from .timebase import now_utc
 
 DEFAULT_SITE = "Cape Canaveral / KSC"
@@ -40,17 +41,21 @@ def parse_epoch(s: str | None) -> datetime:
 
 
 def opt_float(a, key: str, default: float | None = None) -> float | None:
-    """`a[key]` as a float; a missing or empty value gives `default`."""
+    """`a[key]` as a finite float; a missing or empty value gives `default`."""
     v = a.get(key)
     if v is None or v == "":
         return default
     try:
-        return float(v)
+        x = float(v)
     except (TypeError, ValueError):
         raise ValueError(f"{key} must be a number, not {v!r}")
+    if not math.isfinite(x):
+        raise ValueError(f"{key} must be a finite number, not {v!r}")
+    return x
 
 
 def req_float(a, key: str, default: float) -> float:
+    """`opt_float` with a default that is always a number, for the type checker."""
     return opt_float(a, key, default)
 
 
@@ -61,9 +66,8 @@ def default_dt(hours: float, floor: float = 30.0) -> float:
 
 
 def source_of(a) -> str:
-    """The trajectory source a request names: `source=`, else the pre-source
-    convention (anchor=elements for a preset, a launch site otherwise)."""
-    return a.get("source") or ("preset" if a.get("anchor") == "elements" else "site")
+    """The trajectory source a request names (`source=`; a launch site by default)."""
+    return a.get("source") or "site"
 
 
 def _plugin_source(sid: str) -> dict:
@@ -73,17 +77,9 @@ def _plugin_source(sid: str) -> dict:
 
 
 def _call_plugin(sid: str, sp: dict, a):
-    try:
-        return sp["fn"](a)
-    except ValueError:
-        raise
-    except Exception as e:  # the plugin's bug: a 500 that names it, not a bare traceback
-        from .plugins import registry
+    from .plugins import call_plugin
 
-        owner = registry().owner_of("sources", sid)
-        raise PluginError(
-            f"source {sid!r} (plugin '{owner}') failed: {type(e).__name__}: {e}"
-        ) from e
+    return call_plugin("sources", sid, sp["fn"], a)
 
 
 def resolve_site(a) -> LaunchSite:
@@ -186,21 +182,29 @@ def track_from_args(a):
 
 def plan_from_args(a) -> dict:
     """The /api/plan JSON for any trajectory source."""
-    return plan_payload(*track_from_args(a))
+    return plan_payload(*track_from_args(a), args=a)
 
 
-def plan_payload(orb, meta, gt) -> dict:
+def plan_payload(orb, meta, gt, args=None) -> dict:
     """The /api/plan JSON: summary + track.  For an orbit the summary carries its
     elements and the track its first-rev apsides (if elliptic); a finished
     trajectory (orb None) has only its source's meta.  A list of tracks (a
     constellation, a branched run) adds `tracks` and `primary`: see
-    `track_set_payload`."""
+    `track_set_payload`.  `args`, the request that made the plan, rides along
+    as strings so a panel can ask the same plan for more."""
+    out = _plan_payload(orb, meta, gt)
+    if args is not None:
+        out["args"] = {k: str(v) for k, v in args.items() if v is not None and v != ""}
+    return out
+
+
+def _plan_payload(orb, meta, gt) -> dict:
     if isinstance(gt, (list, tuple)):
         return track_set_payload(meta, list(gt))
     track = gt.to_json()
     if orb is None:
         return {"summary": dict(meta), "track": track}
-    if orb.e > 1e-4:
+    if orb.e > 1e-4:  # apsides a few km apart aren't worth two markers (E_CIRCULAR is 1e-8)
         apsides = []
         for kind, ts in zip("PA", orb.apsis_times()):
             la, lo, r = orb.subpoints(np.array([ts]))

@@ -1,18 +1,13 @@
 """Target-pass module: the capability is the module's, not the core's."""
 
-import numpy as np
+import io
+
+from helpers import PAIR_BODY, TOY_PAIR
 
 from mission_planner.modules.passes import find_passes
 
 QS = "site=Cape+Canaveral+%2F+KSC&hp=400&inc=51.6&hours=24&epoch=2026-08-23T00:00:00%2B00:00"
 FIELDS = {"aos_utc", "los_utc", "ca_utc", "ca_t_s", "min_dist_km", "direction", "alt_km"}
-
-
-def test_module_is_listed_as_builtin(core_client):
-    mods = {m["name"]: m for m in core_client.get("/api/modules").get_json()}
-    assert mods["passes"]["builtin"] and mods["passes"]["js_url"] == "/plugins/passes/passes.js"
-    assert mods["passes"]["mcp_tools"] == ["find_passes"]
-    assert mods["passes"]["works_with"] == ["orbit", "trajectory"]
 
 
 def test_module_serves_the_passes_endpoint(core_client):
@@ -21,15 +16,15 @@ def test_module_serves_the_passes_endpoint(core_client):
     body = r.get_json()
     assert body["n"] == len(body["passes"]) > 0
     p = body["passes"][0]
-    assert FIELDS <= set(p)
+    assert FIELDS <= set(p) and "track" not in p  # one track: no track tag
     assert p["min_dist_km"] <= 800.0
 
 
-def test_passes_endpoint_needs_a_target(core_client):
+def test_passes_endpoint_needs_a_numeric_target(core_client):
     r = core_client.get(f"/api/passes?{QS}")
     assert r.status_code == 400 and "tgt_lat" in r.get_json()["error"]
     r = core_client.get(f"/api/passes?{QS}&tgt_lat=x&tgt_lon=0")
-    assert r.status_code == 400
+    assert r.status_code == 400 and "tgt_lat must be a number" in r.get_json()["error"]
 
 
 def test_endpoint_is_registered_by_the_module_blueprint(core_client):
@@ -60,18 +55,13 @@ def test_mcp_tool_takes_element_anchored_orbits():
     assert out["n"] >= 1 and out["passes"][0]["min_dist_km"] < 50.0
 
 
-def test_passes_on_a_finished_trajectory():
-    from datetime import datetime, timezone
-
-    from mission_planner.groundtrack import GroundTrack
-
-    n = 11
-    gt = GroundTrack(
-        epoch=datetime(2026, 8, 23, tzinfo=timezone.utc),
-        t=np.arange(n) * 10.0,
-        lat=np.radians(np.linspace(0.0, 10.0, n)),
-        lon=np.zeros(n),
-        alt=np.linspace(100e3, 0.0, n),
-    )
-    (win,) = gt.passes(5.0, 0.0, within_km=50.0)
-    assert win["direction"] == "ascending" and win["min_dist_km"] < 1.0
+def test_passes_of_a_multi_track_plan_are_tagged_and_on_one_clock(app_with):
+    c, _ = app_with(TOY_PAIR)
+    up = c.post("/api/uploads", data={"file": (io.BytesIO(PAIR_BODY), "pair.txt")}).get_json()
+    # Both tracks run (10, 20) -> (11, 21); the target sits between the samples.
+    r = c.get(f"/api/passes?source=file&upload={up['id']}&tgt_lat=10.5&tgt_lon=20.5&within_km=100")
+    assert r.status_code == 200
+    win = r.get_json()["passes"]
+    assert [(p["track"], p["label"]) for p in win] == [("a", "Alpha"), ("b", "Bravo")]
+    assert win[1]["ca_t_s"] - win[0]["ca_t_s"] == 60.0  # track b's epoch is a minute later
+    assert win[1]["ca_utc"] > win[0]["ca_utc"] and FIELDS <= set(win[0])

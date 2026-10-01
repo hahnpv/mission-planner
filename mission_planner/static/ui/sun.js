@@ -23,9 +23,14 @@ function drawNightGlobe(sun) {
   for (let t = 0; t < 360; t += 2)
     ring.push([0, 1, 2].map(i => a[i] * Math.cos(t * DEG) + b[i] * Math.sin(t * DEG)));
   const dark = v => dot(v, s) < 0;
-  if (dark(B.n) && ring.every(v => dot(v, B.n) < 1e-9)) {   // facing midnight: all dark
-    el("circle", { cx: GLOBE.cx, cy: GLOBE.cy, r: GR, fill:"#1c2733", opacity:.10,
-                   "pointer-events":"none" });
+  // Looking straight from the sun or from midnight (the "sun" camera view),
+  // the ring IS the limb: which side of it is visible is rounding noise, and
+  // the polygon below would wind round the limb and fill the disc.  Decide
+  // from the view direction instead: all dark, or all lit.
+  if (ring.every(v => Math.abs(dot(v, B.n)) < 1e-9)) {
+    if (dark(B.n))
+      el("circle", { cx: GLOBE.cx, cy: GLOBE.cy, r: GR, fill:"#1c2733", opacity:.10,
+                     "pointer-events":"none" });
     return;
   }
   polygonGlobe(ring, { fill:"#1c2733", opacity:.10, "pointer-events":"none" }, null, dark);

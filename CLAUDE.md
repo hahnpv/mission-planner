@@ -14,7 +14,8 @@ API; the core must never import from it.
   silently there and `ruff` is missing. `/usr/bin/python3` has no numpy.
 - Tests: `python -m pytest -q` (~12 s; `-m "not ui"` skips the headless-Chromium UI smoke
   tests in `tests/test_ui.py`, which need `python -m playwright install chromium` once and skip
-  without it). CI (`.github/workflows/tests.yml`) runs ruff + the whole suite on every push.
+  without it). CI (`.github/workflows/tests.yml`) runs ruff + the whole suite on every push to
+  main and every pull request.
   `tests/conftest.py` builds the app over the built-in modules only (`core_reg` / `core_client`
   fixtures), so installed plugins can't affect the core's suite. Run the plugins repo's tests too after changing the plugin API.
 - Web UI: `python -m mission_planner.server` → http://127.0.0.1:3030 (port hard-coded).
@@ -91,7 +92,7 @@ API; the core must never import from it.
   core's DOM) so they go inert with their plugin. Map-drawing modules gate on `ctx.isOpen()`;
   `marker()` keys must be stable across redraws.
 - Frontend: `static/index.html` is markup only; the code is plain scripts in `static/ui/`
-  (state → projection → sun → map → timeline → camera → form → menus → files → plugins), sharing one global
+  (menubar → state → projection → sun → map → timeline → camera → form → menus → files → plugins), sharing one global
   scope — not ES modules, because module scripts rely on `MP` and `document.currentScript`.
 - State that used to be module globals lives on the app: `SceneStore` on
   `app.extensions["mp_scene"]` (SSE waits on its condition, with heartbeats); jobs in a `JobStore`

@@ -32,6 +32,10 @@ try:
     @bp.route("/<uid>/inspect")
     def _inspect_route(uid):
         """What the File source panel shows for a stored file (see filekinds.inspect)."""
+        try:
+            uploads.path(uid)
+        except ValueError as e:  # no such upload: a missing resource, like /api/uploads/<id>
+            return jsonify({"error": str(e)}), 404
         return jsonify(filekinds.inspect(uid))
 except ImportError:  # library use without flask
     bp = None

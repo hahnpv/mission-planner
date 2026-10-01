@@ -105,7 +105,9 @@ MP.register({
       const q = ctx.planArgs();
       q.set("gs_lat", gs.lat); q.set("gs_lon", gs.lon); q.set("min_el", mask());
       $g("cov").textContent = "finding contacts…";
-      const r = await ctx.api("/api/groundstation/contacts?" + q);
+      let r;
+      try { r = await ctx.api("/api/groundstation/contacts?" + q); }
+      catch (e) { r = { error: "server unreachable: " + e.message }; }
       if (my !== reqSeq) return;   // the station, mask or plan changed meanwhile
       if (r.error) { $g("cov").textContent = ""; ctx.status("ground station: " + r.error, true); return; }
       const c = r.coverage, epoch = ctx.getPlan().track.epoch_utc;

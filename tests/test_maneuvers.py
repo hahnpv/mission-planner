@@ -8,6 +8,7 @@ from mission_planner.modules.maneuvers import (
     combined,
     deorbit,
     hohmann,
+    maneuver_budget,
     phasing,
     plane_change,
 )
@@ -37,7 +38,7 @@ def test_plane_change_28p5_at_400km():
 def test_combined_cheaper_than_separate():
     sep = hohmann(300.0, GEO_ALT)["dv_total_ms"] + plane_change(300.0, 28.5)["dv_ms"]
     comb = combined(300.0, GEO_ALT, 28.5)["dv_total_ms"]
-    assert comb < 0.65 * sep
+    assert comb == pytest.approx(0.553 * sep, rel=0.02)  # the textbook GTO saving, ~45%
     # zero-dinc combined reduces to plain Hohmann
     assert combined(300.0, 800.0, 0.0)["dv_total_ms"] == pytest.approx(
         hohmann(300.0, 800.0)["dv_total_ms"], abs=0.2
@@ -55,16 +56,18 @@ def test_combined_going_down_rotates_at_the_departure_end():
     )
 
 
-def test_phasing_basics():
+def test_phasing_catching_up_costs_more_than_dropping_back():
     assert phasing(400.0, 0.0)["dv_total_ms"] == 0.0
     ahead = phasing(400.0, 30.0)
     behind = phasing(400.0, -30.0)
     assert ahead["phasing_alt_km"] < 400.0 < behind["phasing_alt_km"]
     # Vis-viva is nonlinear: catching up (lower/faster) costs more than
-    # dropping back (higher/slower) for the same |lead| — but same ballpark.
-    assert ahead["dv_total_ms"] > behind["dv_total_ms"] > 0
-    assert ahead["dv_total_ms"] == pytest.approx(behind["dv_total_ms"], rel=0.3)
-    # more revs -> gentler phasing orbit, less dv
+    # dropping back (higher/slower) for the same |lead| — by ~18% here.
+    assert ahead["dv_total_ms"] == pytest.approx(1.18 * behind["dv_total_ms"], rel=0.03)
+
+
+def test_phasing_over_more_revs_is_gentler():
+    ahead = phasing(400.0, 30.0)
     five = phasing(400.0, 30.0, n_revs=5)
     assert five["dv_total_ms"] < ahead["dv_total_ms"] and five["n_revs"] == 5
     assert five["time_s"] == pytest.approx(
@@ -94,3 +97,10 @@ def test_budget_composes():
     assert b["plane_change_only"]["dv_ms"] == pytest.approx(plane_change(400.0, 47.0)["dv_ms"])
     assert b["phasing"]["dv_total_ms"] > 0
     assert "deorbit_from_target" in b
+
+
+def test_mcp_tool_is_the_budget():
+    assert maneuver_budget(300.0, 28.5, GEO_ALT, 0.0) == budget(300.0, 28.5, GEO_ALT, 0.0)
+    assert maneuver_budget(300.0, 28.5, GEO_ALT, 0.0)["hohmann"]["dv_total_ms"] == pytest.approx(
+        3893, abs=40
+    )

@@ -271,9 +271,13 @@ def show_plan(
     if beta is not None:
         args["beta"] = beta
     orb, meta, gt = track_from_args(args)
-    plan = plan_payload(orb, meta, gt)
+    plan = plan_payload(orb, meta, gt, args)
     s = plan["summary"]
-    shape = f"{s['perigee_km']:.0f}x{s['apogee_km']:.0f} km" if orb.e > 1e-4 else f"{alt_km:.0f} km"
+    shape = (
+        f"{s['perigee_km']:.0f}x{s['apogee_km']:.0f} km"
+        if s["e"] > 1e-4
+        else f"{s['alt_km']:.0f} km"
+    )
     where = s["site"] if s["site_lat"] is not None else f"node {node_lon_deg or 0:.0f}°E"
     sc = Scene(title=f"{where} · {shape} / {inc_deg:.1f}°", plan=plan)
     if tgt_lat is not None and tgt_lon is not None:

@@ -19,7 +19,7 @@ Endpoints
                                     upload=<id>.  kind: the plugin file reader that claims
                                     it (filekinds.py), or null with kind_note
   /api/uploads?ext=.h5,.hdf5        stored uploads (newest first), optionally by extension
-  /api/uploads/<id>                 {id, name, size, uploaded_utc} of a stored upload
+  /api/uploads/<id>                 {id, name, size, uploaded_utc, kind, ...} of a stored upload
   DELETE /api/uploads/<id>          remove it; -> its last {id, name, ...}
   POST /api/plan_job?<plan args>    same, as a background job (for slow plugin modes)
   /api/plan_job/<id>                poll it; done -> same payload as /api/plan
@@ -106,7 +106,7 @@ def create_app() -> Flask:
         try:
             app.register_blueprint(bp)
         except Exception as e:
-            r.fail(f"blueprint '{bp.name}' could not be registered: {e}")
+            reg.fail(r.name, f"blueprint '{bp.name}' could not be registered: {e}")
             print(f"[mission_planner.server] {r.name}: {r.error}", file=sys.stderr)
             continue
         bp_owner[bp.name] = r.name
@@ -290,9 +290,7 @@ def create_app() -> Flask:
                     # point, makes a closed one fail here instead of never.
                     yield ": ping\n\n"
 
-        return Response(
-            stream(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache"}
-        )
+        return Response(stream(), mimetype="text/event-stream")  # _no_cache: no-store
 
     return app
 

@@ -16,6 +16,9 @@ python -m pytest -q                      # ~12 s; -m "not ui" skips the browser
 ruff check . && ruff format --check .    # config: ruff.toml
 ```
 
+`ruff.toml` excludes `*.md`, so the aligned comments in the docs' code
+blocks survive `ruff format`.
+
 The tests run over the built-in modules only (the `core_reg` / `core_client`
 fixtures in `tests/conftest.py`), so plugins installed in your environment
 can't change the result. Every test gets its own upload store.
@@ -27,7 +30,7 @@ broken script or a layer that stops drawing, not pixel changes. Without the
 browser those tests skip.
 
 GitHub Actions runs the lint and the whole suite, UI tests included, on
-every push and pull request (`.github/workflows/tests.yml`).
+every push to `main` and every pull request (`.github/workflows/tests.yml`).
 
 ## Where things go
 
@@ -35,7 +38,7 @@ every push and pull request (`.github/workflows/tests.yml`).
   `groundtrack.py`, `decay.py` — with a module as the UI, REST and MCP skin
   over it. `GroundTrack.passes()` and `modules/passes.py` are the pattern.
 - **A new core capability** is a built-in module in `mission_planner/modules/`
-  with its UI in `static/modules/`. It uses the same spec as a plugin; see the
+  with its UI in `mission_planner/static/modules/`. It uses the same spec as a plugin; see the
   [Plugin guide](plugins.md).
 - **Anything optional or specialised** is a plugin, in its own package.
   Don't grow `server.py`, `mcp_server.py` or `static/ui/*.js` with feature
@@ -48,8 +51,8 @@ every push and pull request (`.github/workflows/tests.yml`).
   JSON 400.
 
 The frontend is plain scripts sharing one global scope, loaded in order by
-`static/index.html` (state → projection → sun → map → timeline → camera → form → menus
-→ files → plugins) — not ES modules.
+`static/index.html` (menubar → state → projection → sun → map → timeline → camera → form
+→ menus → files → plugins) — not ES modules.
 
 ## Documentation
 

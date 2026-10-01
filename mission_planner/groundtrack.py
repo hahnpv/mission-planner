@@ -8,7 +8,7 @@ from datetime import datetime
 import numpy as np
 
 from .constants import RE
-from .timebase import add_seconds
+from .timebase import add_seconds, as_utc
 
 
 def bearing(lat1, lon1, lat2, lon2):
@@ -53,6 +53,7 @@ class GroundTrack:
     color: str | None = None
 
     def __post_init__(self):
+        self.epoch = as_utc(self.epoch)  # a reader's naive epoch means UTC, like Orbit's
         n = len(self.t)
         if not (len(self.lat) == len(self.lon) == len(self.alt) == n):
             raise ValueError("t, lat, lon and alt must have the same length")
@@ -112,6 +113,7 @@ class GroundTrack:
                     "ca_utc": add_seconds(self.epoch, self.t[k]).isoformat(),
                     "ca_t_s": float(self.t[k]),
                     "min_dist_km": round(float(d[k]), 1),
+                    # The second % 360 folds a 359.96 that rounded up to 360.0.
                     "heading_deg": round(float(np.degrees(hdg[k])) % 360.0, 1) % 360.0,
                     "direction": "ascending" if ascending else "descending",
                     "alt_km": round(float(self.alt[k]) * 1e-3, 1),

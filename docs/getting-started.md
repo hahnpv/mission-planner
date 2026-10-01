@@ -17,7 +17,7 @@ rest:
 |---|---|---|
 | `ui` | flask | the web UI and its REST API |
 | `mcp` | mcp | the MCP server for AI agents |
-| `dev` | flask, mcp, pytest, ruff | working on mission-planner itself |
+| `dev` | `ui` + `mcp`, pytest, ruff, playwright | working on mission-planner itself |
 | `docs` | mkdocs-material | building this documentation |
 
 ## Plan an orbit in the web UI

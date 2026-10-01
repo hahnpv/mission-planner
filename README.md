@@ -11,7 +11,7 @@ core attach as **plugins**; sites, presets and map overlays are **data**.
 ## Install
 
 ```bash
-pip install -e ".[dev]"        # numpy, scipy, pyyaml + flask, mcp, pytest, ruff
+pip install -e ".[dev]"        # numpy, scipy, pyyaml + the ui/mcp extras, pytest, ruff, playwright
 ```
 
 `[ui]` (flask) and `[mcp]` are the runtime extras; the library alone needs
@@ -115,8 +115,8 @@ whole plan that the tab then shows as its own — see `mission_planner/scene.py`
 that renders live in the open browser tab via SSE.  Every error is JSON `{"error": …}` — 400 for bad input, with a reason.
 
 MCP: `python -m mission_planner.mcp_server` exposes `plan_orbit`,
-`list_launch_sites`, `show_scene`, `show_plan` (plans an orbit and shows it in the UI as its plan: timed, with playback),
-the built-in modules' `find_passes` and `maneuver_budget`, plus any active
+`track_samples`, `list_launch_sites`, `show_scene`, `show_plan` (plans an orbit and shows it in the UI as its plan: timed, with playback),
+the built-in modules' `find_passes`, `maneuver_budget` and `load_file`, plus any active
 plugin's tools.
 
 ## Tests

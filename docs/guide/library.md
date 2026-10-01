@@ -35,10 +35,12 @@ ell = Orbit.from_launch_site(home, inc_deg=60, epoch=epoch, ascending=False,
 ```
 
 The orbit's plane contains the site at the epoch, so the vehicle is overhead
-at t = 0. `ascending=True` puts the site on the northeast-going leg.
+at t = 0. `ascending=True` puts the site on the northbound leg (northeast
+for a prograde orbit, northwest for a retrograde one).
 `perigee_offset_deg` places perigee that many degrees downrange of the site
 crossing (0 = perigee over the site, 180 = apogee over it). An inclination
-below the site's latitude raises `ValueError`.
+the plane can't reach from the site (|lat| ≤ i ≤ 180° − |lat| is needed)
+raises `ValueError`.
 
 ### From elements
 
@@ -47,7 +49,7 @@ molniya = Orbit.from_elements(500, 39868, 63.4, epoch, node_lon_deg=65, argp_deg
 geo = Orbit.from_elements(35786, 35786, 0.0, epoch, node_lon_deg=-100)   # station at 100 W
 ```
 
-`from_elements(perigee_km, apogee_km, inc_deg, epoch, node_lon_deg=0,
+`from_elements(perigee_km, apogee_km, inc_deg, epoch=None, node_lon_deg=0,
 argp_deg=0, nu0_deg=None)` anchors the orbit to the Earth by the longitude of
 its ascending node at the epoch — no launch site. Propagation starts at the
 node unless `nu0_deg` (true anomaly at the epoch) is given. For GEO the node
@@ -110,21 +112,23 @@ gt = orb.ground_track(14 * 86400, 60.0, mode="decay", beta=300.0)          # dra
 | mode | physics | stops at |
 |---|---|---|
 | `"kepler"` | two-body plus J2 secular drift of the node, perigee and mean motion | never |
-| `"decay"` | averaged King-Hele drag decay in a co-rotating US 1976 atmosphere; needs `beta` = m / (C<sub>d</sub>A), kg/m², and e ≤ 0.2 | perigee at the 100 km entry interface |
+| `"decay"` | averaged King-Hele drag decay in a co-rotating US 1976 atmosphere; needs `beta` = m / (C<sub>d</sub>A), kg/m², e ≤ 0.2 and a perigee above 100 km | perigee at the 100 km entry interface |
 | a plugin's mode | whatever that plugin flies | — |
 
-A decay track carries `gt.extra["decay_profile"]` (a decimated
-altitude-vs-time series for plotting) and `gt.extra["entry"]` — the UTC,
-time and subpoint of the entry-interface crossing, or `None` if the orbit
-survives the horizon. See [Models and assumptions](models.md) for what the
-decay model leaves out.
+A decay track has the same sample times as the Kepler track for the same
+`duration_s` / `dt_s` (until it stops), so switching modes doesn't move the
+samples. It carries `gt.extra["decay_profile"]` (decimated `t`, mean
+`alt_km`, `perigee_km` and `apogee_km` series for plotting) and
+`gt.extra["entry"]` — the UTC, time and subpoint of the entry-interface
+crossing, or `None` if the orbit survives the horizon. See
+[Models and assumptions](models.md) for what the decay model leaves out.
 
 ## Ground tracks
 
-A `GroundTrack` is one vehicle's samples: `epoch`, and arrays `t` (seconds
-past the epoch), `lat`, `lon` (radians) and `alt` (metres), plus `extra` for
-mode-specific payloads. `id`, `label`, `parent` and `color` tell tracks apart
-when a plan holds several.
+A `GroundTrack` is one vehicle's samples: `epoch` (a naive datetime is taken
+as UTC, as everywhere), and arrays `t` (seconds past the epoch), `lat`, `lon`
+(radians) and `alt` (metres), plus `extra` for mode-specific payloads. `id`,
+`label`, `parent` and `color` tell tracks apart when a plan holds several.
 
 ```python
 for p in gt.passes(40.0, -105.0, within_km=500):

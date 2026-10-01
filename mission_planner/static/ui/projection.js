@@ -54,10 +54,10 @@ function unproject(x, y) {
 // ellipse, not a ground-track spiral.  That's "ECI" in the View menu: the
 // shape is ECI's, the axes are the earth's at tCur (no precession or
 // nutation).  "ECEF" skips the turn: the ground track lifted to altitude.
-// Vectors are in earth radii.
-function orbitVec(lat, lon, alt_km, t_s) {
+// Vectors are in earth radii.  `frame` defaults to the View menu's choice.
+function orbitVec(lat, lon, alt_km, t_s, frame = orbitView.frame) {
   const k = 1 + alt_km / RE_KM;
-  const turn = orbitView.frame === "eci" ? OMEGA_E_DEG * (t_s - tCur) : 0;
+  const turn = frame === "eci" ? OMEGA_E_DEG * (t_s - tCur) : 0;
   return vec(lat, lon + turn).map(q => q * k);
 }
 // Hidden only when behind the earth AND inside its disc.

@@ -3,7 +3,7 @@
 Angles are radians and lengths meters internally; constructors take the
 degree/kilometer units humans actually use.  Epochs are timezone-aware UTC
 datetimes (naive input is assumed UTC).  The Earth is a sphere: site
-latitudes are geocentric (the geodetic gap is ~0.16 deg at 30 deg).
+latitudes are geocentric (the geodetic gap is ~0.17 deg at 30 deg).
 """
 
 from __future__ import annotations
@@ -28,26 +28,32 @@ def wrap_pi(x):
 
 
 # ------------------------------------------------------------ element helpers
-def kepler_E(M, e: float, iterations: int = 30):
-    """Eccentric anomaly from mean anomaly (Newton; scalar or array)."""
-    if e < E_CIRCULAR:
-        return M
+def kepler_E(M, e, iterations: int = 30):
+    """Eccentric anomaly from mean anomaly (Newton; scalar or array, and `e`
+    may be an array too — a decaying orbit's per-sample eccentricity)."""
     M = np.asarray(M, dtype=float)
+    e = np.asarray(e, dtype=float)
     # Solve on the wrapped anomaly (Newton is only well-behaved near the
     # principal branch) and add the whole turns back afterwards.
     Mw = wrap_pi(M)
     turns = M - Mw
     # Start above |M| for e > 0.8: Newton from E = M can overshoot near perigee.
-    E = Mw + e * np.sin(Mw) if e < 0.8 else np.where(Mw < 0, -math.pi, math.pi)
+    E = np.where(e < 0.8, Mw + e * np.sin(Mw), np.where(Mw < 0, -math.pi, math.pi))
     for _ in range(iterations):
         E = E - (E - e * np.sin(E) - Mw) / (1.0 - e * np.cos(E))
     E = E + turns
     return E if E.shape else float(E)
 
 
-def nu_from_E(E, e: float):
-    """True anomaly from eccentric anomaly (scalar or array)."""
-    return 2.0 * np.arctan2(np.sqrt(1 + e) * np.sin(E / 2), np.sqrt(1 - e) * np.cos(E / 2))
+def nu_from_E(E, e):
+    """True anomaly from eccentric anomaly (scalar or array), keeping E's whole
+    turns so nu is continuous — the half-angle form alone wraps every turn."""
+    E = np.asarray(E, dtype=float)
+    e = np.asarray(e, dtype=float)
+    Ew = wrap_pi(E)
+    nu = 2.0 * np.arctan2(np.sqrt(1 + e) * np.sin(Ew / 2), np.sqrt(1 - e) * np.cos(Ew / 2))
+    nu = nu + (E - Ew)
+    return nu if nu.shape else float(nu)
 
 
 def M_from_nu(nu: float, e: float) -> float:
@@ -59,9 +65,13 @@ def M_from_nu(nu: float, e: float) -> float:
 
 
 def sma_ecc_from_apsides(perigee_km: float, apogee_km: float) -> tuple[float, float]:
-    """(a [m], e) from apsis altitudes [km]; apogee is raised to perigee if lower."""
+    """(a [m], e) from apsis altitudes [km]; apogee is raised to perigee if lower.
+    A perigee below the surface is allowed (a deorbit ellipse), not one below
+    the Earth's centre."""
     apogee_km = max(apogee_km, perigee_km)
     rp, ra = RE + perigee_km * 1e3, RE + apogee_km * 1e3
+    if rp <= 0:
+        raise ValueError(f"perigee altitude {perigee_km:g} km is below the Earth's centre")
     return 0.5 * (rp + ra), (ra - rp) / (ra + rp)
 
 
@@ -142,7 +152,7 @@ class Orbit:
         apogee is overhead) — the site subpoint at t=0 is unchanged, only
         the phasing on the ellipse, so the altitude over the site is derived.
 
-        `ascending=True` places the site on the northeast-going leg.
+        `ascending=True` places the site on the northbound leg.
         Raises ValueError when inc < |site latitude|.
         """
         epoch = as_utc(epoch or now_utc())
@@ -162,7 +172,7 @@ class Orbit:
         if abs(s) > 1.0 + 1e-9:
             raise ValueError(
                 f"inclination {inc_deg:.2f} deg cannot pass over latitude "
-                f"{site.lat_deg:.2f} deg (need inc >= |lat|)"
+                f"{site.lat_deg:.2f} deg (need |lat| <= inc <= 180 - |lat|)"
             )
         s = max(-1.0, min(1.0, s))
         u0 = math.asin(s)
@@ -371,21 +381,24 @@ class Orbit:
         E = kepler_E(m, self.e, iterations=12)
         return nu_from_E(E, self.e), self.a * (1.0 - self.e * np.cos(E))
 
+    def _u_and_r(self, t):
+        """(argument of latitude [rad], radius [m]) at seconds-past-epoch `t`."""
+        t = np.asarray(t, dtype=float)
+        nu, r = self._anomalies(t)
+        return self.argp + self.j2_rates()[1] * t + nu, r
+
     def argument_of_latitude(self, t):
         """Argument of latitude u = argp(t) + nu(t) [rad] at seconds-past-epoch
         `t` (scalar or array) — where the vehicle is along its orbit, measured
-        from the ascending node."""
-        t = np.asarray(t, dtype=float)
-        nu, _ = self._anomalies(t)
-        return self.argp + self.j2_rates()[1] * t + nu
+        from the ascending node.  Continuous: whole turns accumulate rather
+        than wrapping, so differences count revolutions."""
+        return self._u_and_r(t)[0]
 
     def eci_positions(self, t: np.ndarray) -> np.ndarray:
         """ECI positions [m], shape (N, 3), at seconds-past-epoch `t`."""
         t = np.asarray(t, dtype=float)
-        nu, r = self._anomalies(t)
-        raan_dot, argp_dot, _ = self.j2_rates()
-        u = self.argp + argp_dot * t + nu  # argument of latitude
-        raan = self.raan + raan_dot * t
+        u, r = self._u_and_r(t)
+        raan = self.raan + self.j2_rates()[0] * t
         ci, si = math.cos(self.inc), math.sin(self.inc)
         cu, su = np.cos(u), np.sin(u)
         co, so = np.cos(raan), np.sin(raan)
@@ -458,9 +471,10 @@ class Orbit:
                 )
             return propagate_decay(self, beta, duration_s, dt_s)
         if mode != "kepler":
-            from .plugins import registry
+            from .plugins import call_plugin, registry
 
-            return registry().propagator(mode)["fn"](self, beta, duration_s, dt_s)
+            fn = registry().propagator(mode)["fn"]
+            return call_plugin("propagators", mode, fn, self, beta, duration_s, dt_s)
         t = np.arange(0.0, float(duration_s) + 0.5 * dt_s, dt_s)
         lat, lon, r = self.subpoints(t)
         return GroundTrack(epoch=self.epoch, t=t, lat=lat, lon=lon, alt=r - RE)

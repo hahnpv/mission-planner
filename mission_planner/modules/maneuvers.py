@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 
 from ..constants import MU, RE
+from ..planning import opt_float, req_float
 
 
 def _r(alt_km: float) -> float:
@@ -131,19 +132,15 @@ try:
     @bp.route("/budget")
     def _budget_route():
         a = request.args
-        try:
-            lead = float(a["lead"]) if a.get("lead") not in (None, "") else None
-            return jsonify(
-                budget(
-                    float(a.get("alt1", 400.0)),
-                    float(a.get("inc1", 51.6)),
-                    float(a.get("alt2", 400.0)),
-                    float(a.get("inc2", 51.6)),
-                    lead_deg=lead,
-                )
+        return jsonify(
+            budget(
+                req_float(a, "alt1", 400.0),
+                req_float(a, "inc1", 51.6),
+                req_float(a, "alt2", 400.0),
+                req_float(a, "inc2", 51.6),
+                lead_deg=opt_float(a, "lead"),
             )
-        except (ValueError, KeyError) as e:
-            return jsonify({"error": str(e)}), 400
+        )
 except ImportError:  # library use without flask
     bp = None
 

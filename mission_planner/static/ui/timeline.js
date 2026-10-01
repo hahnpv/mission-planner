@@ -41,6 +41,7 @@ document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => {
 });
 $("scrub").oninput = setScrubFromSlider;
 $("play").onclick = () => {
+  if (!plan) return;   // nothing to play: don't flip to "paused" over a dead loop
   playing = !playing;
   $("play").innerHTML = playing ? "&#10074;&#10074;" : "&#9654;";
   if (playing) { lastFrame = performance.now(); requestAnimationFrame(tick); }

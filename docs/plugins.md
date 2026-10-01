@@ -83,14 +83,15 @@ built-in and every entry point, in load order. Each record has a status:
 | status | meaning | shown as |
 |---|---|---|
 | `loaded` | imported and valid | switch in the Plugins menu |
-| `failed` | import raised, spec invalid, name or id already taken, or part of a `requires` cycle | red detail with the reason |
+| `failed` | import raised, spec invalid, name or id already taken, part of a `requires` cycle, or its blueprint would not register when the app was built (whatever requires it then becomes unavailable) | red detail with the reason |
 | `unavailable` | a requirement is missing / failed / unavailable, or `available()` returned a reason | grey detail with the reason |
 
 Validity is checked key by key (types, callables, core ids), so a typo is
 reported as *failed: 'propagators' must be a dict…* instead of a 500 later.
 Ids that must be unique across the core and all plugins — propagation mode
-ids, source ids, blueprint names and MCP tool function names — are checked
-in load order: the later plugin that reuses one is failed, naming the owner.
+ids, source ids, file reader ids, blueprint names and MCP tool function
+names — are checked in load order: the later plugin that reuses one is
+failed, naming the owner.
 
 At run time a loaded plugin is **active** when its own switch is on and every
 plugin it `requires` is active. Switching a plugin on switches its
@@ -116,7 +117,7 @@ active (nested blueprints included). Keep flask optional so the package
 imports as a library without it:
 
 ```python
-from mission_planner.planning import req_float, track_from_args
+from mission_planner.planning import track_from_args
 
 def altitude_stats(gt):
     """Min / max / mean altitude of a track [km]."""
@@ -148,11 +149,15 @@ Two things the core does for you:
   sends the same query string to your route that it sent to `/api/plan`
   (`ctx.planArgs()` below), so the panel always talks about the orbit on
   screen. `opt_float(args, key, default)` / `req_float(args, key, default)`
-  parse numbers with a clean error.
+  parse numbers with a clean error (`nan` and `inf` are rejected too).
 - **Errors.** Raise `ValueError` for bad input and the core turns it into
   `{"error": …}` with HTTP 400; anything else becomes a JSON 500 with the
   traceback on stderr. You only need your own `try/except` when you want a
-  different status.
+  different status. The core calls your sources, file readers and
+  propagators through `plugins.call_plugin(key, item, fn, *args)`, which
+  lets a `ValueError` through as that 400 and turns anything else into a
+  `PluginError` 500 naming your plugin — so a bug reads as yours, not the
+  core's.
 
 Blueprint names must be unique across plugins; the URL prefix is yours to
 choose, `/api/<plugin name>/…` by convention.
@@ -197,8 +202,8 @@ plugin is switched off.
 | `api(path)` | `fetch` + JSON; resolves to the body, which has an `error` field on a 4xx/5xx; throws on a network failure or a non-JSON error |
 | `status(msg, isErr?)` | the status bar: one line along the bottom of the window, shared by the core and every plugin (errors in red) |
 | `redraw()` | redraw the map (call after your layer's data changed) |
-| `getPlan()` | the current `{summary, track, tracks?, primary?}` from `/api/plan`, or `null`; `track` is the track in focus (section 3.9) |
-| `planArgs()` | `URLSearchParams` of the request that produced the current plan (source, shape, epoch, mode, beta, hours, dt) |
+| `getPlan()` | the current `{summary, track, tracks?, primary?, args?}` from `/api/plan`, or `null`; `track` is the track in focus (section 3.9), `args` the query args that made it |
+| `planArgs()` | `URLSearchParams` of the request that produced the current plan (source, shape, epoch, mode, beta, hours, dt) — the plan's own `args`, so a plan an agent pushed answers too and a form the user has moved on doesn't interfere; before any plan, the form's |
 | `isOpen()` | the panel is open **and** the plugin is active |
 | `onToggle(cb)` | `cb(open)` when the user opens or closes the panel |
 | `onPlan(cb)` | `cb(plan)` after every new plan, whenever the focus moves to another track, and once when the plugin is switched on while a plan is showing |
@@ -213,13 +218,15 @@ plugin is switched off.
 | `addDisplayToggle(label, checked, cb)` | a checkbox row in the View menu's layers section; returns the `<input>` holding the state |
 | `addMenuItem(menu, item)` | an item in a menu-bar menu (created if new); item types in `static/ui/menubar.js` |
 | `addSource(spec)` / `updateSource()` | a trajectory source's UI half (section 3.5) |
-| `filePicker(opts)` | a file input over the server's upload store (section 3.6); returns `{el, value, info, select(id), refresh()}` |
+| `filePicker(opts)` | a file input over the server's upload store (section 3.6): `opts = {accept: ".h5,.hdf5", placeholder, onChange(info \| null)}`; returns `{el, value, info, select(id), refresh()}` |
 | `openFile(id, {plan?})` | show a stored file (upload id) in the File source; `plan: true` plans it once its reader has described it |
 | `plan()` | plan what the form currently says, as the plan button does |
 
 Panels, menu items, display toggles and every hook above are hidden or
 skipped while the plugin is inactive, and while the current plan is of a
-kind the plugin does not `works_with` (section 3.8).
+kind the plugin does not `works_with` (section 3.8). Hooks are isolated: a
+callback that throws is logged to the browser console and never stops
+another plugin's hooks or the core's redraw.
 
 **Map layers.** `onDraw` / `onDrawOver` callbacks run on every redraw (every
 drag frame), so keep them cheap and gate them on `ctx.isOpen()`: a closed
@@ -275,8 +282,9 @@ MODULE = {..., "mcp_tools": [altitude_stats_tool]}
 
 `orbit_from_params` takes the same keywords as the core's `plan_orbit` tool
 and reads them exactly as `/api/plan` would, so an agent and the UI agree.
-Tool names (the function `__name__`) are unique across the core and all
-plugins; a collision fails the plugin at load.
+Tools must be *named* functions (a `__name__` string; a `functools.partial`
+is rejected), and the names are unique across the core and all plugins — a
+collision fails the plugin at load.
 
 ### 3.4 Propagation modes — `propagators`
 
@@ -311,9 +319,11 @@ plan as a background job (`POST /api/plan_job`, polled) instead of blocking.
 Put anything mode-specific for the UI into `extra` on the track: the core
 already understands `entry` (`{epoch_utc, t_s, lat_deg, lon_deg}`),
 `impact` (the same plus `last_alt_km`) and `decay_profile` (`{t, alt_km}`
-lists) and draws them; other keys ride along in the plan JSON for your own
+lists, plus `perigee_km` and `apogee_km` for the panel's perigee–apogee
+band) and draws them; other keys ride along in the plan JSON for your own
 panel. Raise `ValueError` for inputs the mode cannot take (an eccentric
-orbit, a missing beta); the message reaches the user.
+orbit, a missing beta); the message reaches the user. Anything else the
+mode raises is reported as your plugin's failure (section 3.1, errors).
 
 ### 3.5 Trajectory sources — `sources` and `ctx.addSource`
 
@@ -494,7 +504,12 @@ or a click on a vehicle — your `onPlan` hook runs again when it does. The
 point limit covers all tracks together. A single track's time must never run
 backwards (`GroundTrack` refuses it, beyond microsecond round-off): several
 vehicles are several tracks, not one. A track with a `color` draws in it,
-focused or not; the others use the plan's blue.
+focused or not; the others use the plan's blue. A track is drawn only within
+its own time span — outside it the vehicle's dot and footprint vanish, the
+focused track's too, and a focused track wholly outside the display window
+draws nothing. Routes that take a plan get the list as well: the core's
+`/api/passes` answers for every track, each pass tagged `track` (id) and
+`label`, times on the first track's clock, in time order.
 
 ## 4. Testing a plugin
 
@@ -506,13 +521,14 @@ import mission_planner.server as server
 from mission_planner.plugins import Registry, builtin_sources
 from my_plugins.altstats import MODULE
 
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
+    monkeypatch.setenv("MP_UPLOAD_DIR", str(tmp_path / "uploads"))   # not the real upload store
     reg = Registry([*builtin_sources(), ("altstats", False, lambda: MODULE)])
     monkeypatch.setattr(plugins, "_REGISTRY", reg)   # the registry the app is built over
     return server.create_app().test_client(), reg
 
-def test_loads_and_serves(monkeypatch):
-    c, reg = client(monkeypatch)
+def test_loads_and_serves(monkeypatch, tmp_path):
+    c, reg = client(monkeypatch, tmp_path)
     assert reg.records["altstats"].status == "loaded"
     assert c.get("/api/altstats/?hours=1").status_code == 200
     reg.set_enabled("altstats", False)

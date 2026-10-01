@@ -19,7 +19,7 @@ function args() {
     if (ep) a.set("epoch", ep + ":00+00:00");
     a.set("mode", $("mode").value);
     if (modeInfo($("mode").value).needs_beta) a.set("beta", $("beta").value);
-    // dt: keep point count sane over long horizons
+    // dt: the mirror of planning.default_dt (TARGET_POINTS 20000, 30 s floor)
     const dt = Math.max(30, Math.round(+$("hours").value * 3600 / 20000 / 10) * 10);
     a.set("dt", dt);
   }
@@ -104,8 +104,10 @@ function applyPlan(res) {
     return;
   }
   // Only the plan itself: a job result also carries its bookkeeping
-  // (status, elapsed_s), which must not leak into the plan.
-  plan = { summary: res.summary, track: res.track, tracks: res.tracks, primary: res.primary };
+  // (status, elapsed_s), which must not leak into the plan.  `args` are the
+  // query args that produced it (ctx.planArgs).
+  plan = { summary: res.summary, track: res.track, tracks: res.tracks, primary: res.primary,
+           args: res.args };
   // A scene that came with a plan annotates that plan (its target, passes):
   // it goes when another plan replaces it.  A plain scene stays.
   if (scene?.plan && res !== scene.plan) scene = null;
@@ -131,7 +133,7 @@ function applyPlan(res) {
     status(`showing ${s.title || s.source} (${new Date().toISOString().slice(11, 19)}Z)`);
     $("elements").innerHTML = "";
     setWindow(0, 1);
-    MP.live(MP._onPlan).forEach(cb => cb(plan));
+    MP.fire(MP._onPlan, "module onPlan", plan);
     return;
   }
   const shape = s.e > 1e-4
@@ -151,7 +153,7 @@ function applyPlan(res) {
     ["&omega; (arg perigee)", s.argp_deg + "°"], ["&nu;&#8320;", s.nu0_deg + "°"],
   ].map(row).join("") + "</table>";
   setWindow(0, 1);
-  MP.live(MP._onPlan).forEach(cb => cb(plan));
+  MP.fire(MP._onPlan, "module onPlan", plan);
 }
 $("plan").onclick = doPlan;
 
@@ -172,7 +174,7 @@ function setFocus(id) {
   if (!tr || tr === plan.track) return;
   plan.track = tr;
   $("tracksel").value = id;
-  MP.live(MP._onPlan).forEach(cb => cb(plan));
+  MP.fire(MP._onPlan, "module onPlan", plan);
   redraw();
 }
 $("tracksel").onchange = () => setFocus($("tracksel").value);
@@ -241,12 +243,13 @@ periSync();
 
 // ------------------------------------------------------------ orbit presets
 // Element-anchored classics: no launch site; RAAN from node/station longitude.
-let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, pack?, raw} from /api/presets
+let PRESETS = {};   // name -> {hp, ha, inc, argp?, node_lon?, raw} or {file_from} from /api/presets
 function buildPresets(list) {
   PRESETS = {};
   for (const p of list)
-    PRESETS[p.name] = p.file_from ? { file_from: p.file_from, pack: p.pack } : { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
-                        argp: p.argp_deg, node_lon: p.node_lon_deg, pack: p.pack, raw: p };
+    PRESETS[p.name] = p.file_from ? { file_from: p.file_from }
+      : { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
+          argp: p.argp_deg, node_lon: p.node_lon_deg, raw: p };
   const cur = $("preset").value;
   $("preset").innerHTML = "<option value='' disabled hidden>choose an orbit…</option>"
     + list.map(p => `<option>${escHtml(p.name)}</option>`).join("");
@@ -259,30 +262,25 @@ function buildPresets(list) {
 // plugins.js): a preset family with its own rules -- e.g. the sun-synchronous
 // one (modules/sso.py), whose inclination follows from the altitude and whose
 // node from the local time -- lives in a module, not here.
-const presetName = () => activePreset ? Object.keys(PRESETS).find(k => PRESETS[k] === activePreset) : null;
+// activePreset (state.js) is the preset's NAME: a catalog refresh rebuilds the
+// PRESETS records, and the name survives that where an object would not.
 // Every live onPreset hook learns the preset in play: the catalog record and
 // name, or (null, null) when none is (none chosen, or another source).
 function presetChanged() {
-  const name = presetName();
-  for (const fn of MP.live(MP._preset)) {
-    try { fn(name ? activePreset.raw : null, name); }
-    catch (e) { console.error("module preset hook:", e); }
-  }
+  MP.fire(MP._preset, "module preset hook",
+          activePreset ? PRESETS[activePreset].raw : null, activePreset);
 }
 function shapeChanged() {
   // The form's first sync runs before plugins.js (MP) and any module loads.
   if (typeof MP === "undefined") return;
-  for (const fn of MP.live(MP._shape)) {
-    try { fn(getShape()); }
-    catch (e) { console.error("module shape hook:", e); }
-  }
+  MP.fire(MP._shape, "module shape hook", getShape());
 }
 // The orbit shape as the form holds it; epoch is the input's own string,
 // "YYYY-MM-DDTHH:MM" in UTC ("" when unset).
 function getShape() {
   const hp = +$("peri").value;
   return { hp, ha: Math.max(+$("apo").value || hp, hp), inc: +$("inc").value,
-           node_lon: +$("nodelon").value, epoch: $("epoch").value, preset: presetName() };
+           node_lon: +$("nodelon").value, epoch: $("epoch").value, preset: activePreset };
 }
 // Write shape fields through the form's own setters.  A new perigee/apogee
 // runs the usual sync, which reaches onShapeChange hooks; inc / node_lon alone
@@ -301,17 +299,18 @@ function setShape(v) {
 $("preset").onchange = () => {
   const name = $("preset").value;
   if (name && PRESETS[name]?.file_from) {   // a file preset: to the File source
-    $("preset").value = presetName() ?? "";
+    $("preset").value = activePreset ?? "";
     return openFilePreset(name, PRESETS[name]);
   }
-  activePreset = name ? PRESETS[name] : null;
+  activePreset = name || null;
   $("nodelonrow").style.display = activePreset ? "block" : "none";
   showSource();
   if (activePreset) {
-    $("peri").value = activePreset.hp; $("alt").value = activePreset.hp;
-    $("apo").value = activePreset.ha > activePreset.hp ? activePreset.ha : "";
-    setInc(activePreset.inc);
-    $("nodelon").value = activePreset.node_lon ?? 0;
+    const p = PRESETS[name];
+    $("peri").value = p.hp; $("alt").value = p.hp;
+    $("apo").value = p.ha > p.hp ? p.ha : "";
+    setInc(p.inc);
+    $("nodelon").value = p.node_lon ?? 0;
     status(`preset ${name} — adjust if needed, then plan.`);
   }
   presetChanged();
@@ -357,7 +356,7 @@ const SOURCES = [
   { id:"preset", label:"Orbit preset", kind:"orbit", shape:true, epochLabel:"epoch (utc)",
     ready: () => !!activePreset,
     args(a) {
-      a.set("argp", activePreset.argp || 0);
+      a.set("argp", PRESETS[activePreset].argp || 0);
       a.set("node_lon", $("nodelon").value || 0);
     } },
 ];
@@ -374,7 +373,7 @@ function setSource(id) {
     for (const k of SHAPE) $(k).value = memo[k];
     $("alt").value = memo.peri; setInc(memo.inc); $("pofsv").textContent = memo.pofs;
   }
-  activePreset = id === "preset" && $("preset").value ? PRESETS[$("preset").value] : null;
+  activePreset = (id === "preset" && $("preset").value) || null;
   showSource();
   presetChanged();
   periSync();
@@ -410,10 +409,12 @@ function buildSites() {
   else $("site").onchange();
 }
 // Sites, presets and overlays: the core catalog plus every active data pack.
+// A server-side error (a broken data pack) is thrown with its message.
 async function refreshCatalogs() {
-  let presets;
-  [sitesList, presets, overlayList] = await Promise.all(
+  const [sites, presets, overlays] = await Promise.all(
     [api("/api/sites"), api("/api/presets"), api("/api/overlays")]);
+  for (const r of [sites, presets, overlays]) if (r.error) throw new Error(r.error);
+  [sitesList, overlayList] = [sites, overlays];
   buildSites();
   buildPresets(presets);
 }

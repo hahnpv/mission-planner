@@ -17,11 +17,14 @@ here.
 ```text
 examples/groundstation/
 ├── pyproject.toml               # 1: the entry point
+├── README.md
 ├── mp_groundstation/
 │   ├── __init__.py              # 1, 3, 4: spec, route, MCP tool
 │   ├── contacts.py              # 2: the math
 │   └── static/groundstation.js  # 5-7: panel, map layers
-└── tests/test_groundstation.py  # 8: tests
+└── tests/
+    ├── conftest.py              # makes the package importable uninstalled
+    └── test_groundstation.py    # 8: tests
 ```
 
 ## 1. A plugin that does nothing
@@ -107,8 +110,10 @@ def look_angles(gt, lat_deg: float, lon_deg: float) -> tuple[np.ndarray, np.ndar
 `contacts(gt, lat_deg, lon_deg, min_el_deg=10.0)` then finds each run of
 samples above the mask, interpolates acquisition (AOS) and loss (LOS) between
 samples, and reports duration, maximum elevation and azimuths.
-`coverage(windows, span_s)` sums a list of windows up: how many, time in
-contact, the longest gap. Try them straight from Python:
+`coverage(windows, span_s)` sums a list of windows up: how many, the mean
+length of one, the time in contact with at least one track (overlapping
+windows of several tracks are merged), the longest gap. Try them straight
+from Python:
 
 ```python
 from mission_planner import Orbit, SITES
@@ -141,8 +146,9 @@ orbit, a file, a constellation — and returns one track or a list of them.
 ```python title="mp_groundstation/__init__.py"
 from mission_planner.planning import opt_float, track_from_args
 
-def station_contacts(args, lat_deg, lon_deg, min_el_deg) -> dict:
-    """Contact windows of every track of the plan `args` describes."""
+def station_contacts(args, lat_deg: float, lon_deg: float, min_el_deg: float) -> dict:
+    """Contact windows of every track of the plan `args` describes (query
+    args, as /api/plan takes them), in time order, with the coverage summary."""
     _, meta, gt = track_from_args(args)
     tracks = gt if isinstance(gt, (list, tuple)) else [gt]
     ...  # contacts() per track, in time order, plus coverage()
@@ -179,9 +185,11 @@ curl 'http://127.0.0.1:3030/api/groundstation/contacts?site=Vandenberg&hp=550&in
 
 Any function in `mcp_tools` becomes a tool of the MCP server. Its name,
 annotated parameters and docstring are what the agent sees, so write the
-docstring for a reader who has only that. Use the same orbit keywords as the
-core's tools (`plan_orbit`, `find_passes`), and let `args_from_params` turn
-them into the query arguments the route already understands:
+docstring for a reader who has only that. Take the core tools' orbit
+keywords (`plan_orbit`, `find_passes`) and let `args_from_params` turn them
+into the query arguments the route already understands. Unlike the panel,
+which follows whatever plan is on screen, the tool plans a Kepler orbit of
+its own (it takes no `mode` or `beta`):
 
 ```python title="mp_groundstation/__init__.py"
 from mission_planner.planning import DEFAULT_SITE, args_from_params, default_dt
@@ -243,8 +251,10 @@ MP.register({
       <button id="gs_clear" class="small ghost" type="button">remove</button>
     </div>
     ...
-    <input id="gs_mask" type="number" step="1" min="0" max="89" value="10">
-    <div id="gs_cov" class="hint"></div>
+      <input id="gs_mask" type="number" step="1" min="0" max="89" value="10"
+             title="elevation mask: the lowest elevation that counts as contact">
+    ...
+    <div id="gs_cov" class="hint" style="margin-top:4px"></div>
     <div id="gs_table"></div>`,
   init(ctx) {
     const $g = id => document.getElementById("gs_" + id);
@@ -261,25 +271,30 @@ is the query of the request that produced the current plan, so the server
 recomputes exactly that trajectory:
 
 ```js
-async function refresh() {
-  if (!gs || !ctx.getPlan() || !ctx.isOpen()) return;
-  const my = ++reqSeq;
-  const q = ctx.planArgs();
-  q.set("gs_lat", gs.lat); q.set("gs_lon", gs.lon); q.set("min_el", mask());
-  const r = await ctx.api("/api/groundstation/contacts?" + q);
-  if (my !== reqSeq) return;   // the station, mask or plan changed meanwhile
-  if (r.error) { ctx.status("ground station: " + r.error, true); return; }
-  ...   // fill #gs_cov and #gs_table from r.coverage and r.contacts
-  $g("table").querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => ctx.seek(+tr.dataset.t));
-}
-ctx.onPlan(() => refresh());
-ctx.onToggle(open => { if (open) refresh(); });
+    async function refresh() {
+      if (!gs || !ctx.getPlan() || !ctx.isOpen()) return;
+      const my = ++reqSeq;
+      const q = ctx.planArgs();
+      q.set("gs_lat", gs.lat); q.set("gs_lon", gs.lon); q.set("min_el", mask());
+      $g("cov").textContent = "finding contacts…";
+      let r;
+      try { r = await ctx.api("/api/groundstation/contacts?" + q); }
+      catch (e) { r = { error: "server unreachable: " + e.message }; }
+      if (my !== reqSeq) return;   // the station, mask or plan changed meanwhile
+      if (r.error) { $g("cov").textContent = ""; ctx.status("ground station: " + r.error, true); return; }
+      ...   // fill #gs_cov and #gs_table from r.coverage and r.contacts
+      $g("table").querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => ctx.seek(+tr.dataset.t));
+    }
+    ctx.onPlan(() => refresh());
+    ctx.onToggle(open => { if (open) refresh(); });
 ```
 
 - `ctx.onPlan` fires after every new plan (and when the focus moves to
   another track); `ctx.onToggle` when the panel is opened or closed. Work
   only while `ctx.isOpen()`: a closed panel costs nothing.
-- `ctx.api` returns the JSON body, with an `error` field on a 4xx/5xx.
+- `ctx.api` returns the JSON body, with an `error` field on a 4xx/5xx, and
+  throws when the server can't be reached — hence the `try/catch`, which
+  turns that into the same `error` path.
 - `ctx.status` writes to the status bar at the bottom of the window.
 - `ctx.seek(t_s)` moves playback — clicking a contact jumps to its maximum
   elevation.
@@ -291,12 +306,12 @@ longitude of any click on the map or globe; the plugin only acts on one after
 **place on map** was pressed, so it never steals clicks from other panels:
 
 ```js
-ctx.onClick((lat, lon) => {
-  if (!placing) return;
-  placing = false;
-  setStation(lat, lon);
-  ctx.status(`ground station at ${gs.lat.toFixed(3)}°, ${gs.lon.toFixed(3)}°.`);
-});
+    ctx.onClick((lat, lon) => {
+      if (!placing) return;
+      placing = false;
+      setStation(lat, lon);
+      ctx.status(`ground station at ${gs.lat.toFixed(3)}°, ${gs.lon.toFixed(3)}°.`);
+    });
 ```
 
 Drawing goes through `ctx.onDraw` (under the ground track) and
@@ -309,24 +324,26 @@ The ring inside which the vehicle in focus is above the mask, at its altitude
 right now:
 
 ```js
-ctx.onDraw(d => {
-  if (!gs || !d.plan || !ctx.isOpen()) return;
-  const tr = d.plan.track, k = d.idxAtTime(d.tCur, tr);
-  const [lats, lons] = circle(ringDeg(tr.alt_km[k]));
-  d.polygon(lats, lons, { fill: d.C.green, "fill-opacity": 0.06, stroke: d.C.green,
-                          "stroke-width": 1, "stroke-dasharray": "4 3" });
-});
+    ctx.onDraw(d => {
+      if (!gs || !d.plan || !ctx.isOpen()) return;
+      const tr = d.plan.track, k = d.idxAtTime(d.tCur, tr);
+      const [lats, lons] = circle(ringDeg(tr.alt_km[k]));
+      d.polygon(lats, lons, { fill: d.C.green, "fill-opacity": 0.06, stroke: d.C.green,
+                              "stroke-width": 1, "stroke-dasharray": "4 3" });
+    });
 ```
 
 And the station itself, as a clickable marker with a readout:
 
 ```js
-ctx.onDrawOver(d => {
-  if (!gs) return;
-  ...   // who is above the mask now, for the panel line and the readout
-  d.marker(gs.lat, gs.lon, d.C.green, "site", gs.name,
-    { key: "gs", title: gs.name, rows: [["mask", `${mask()}°`], ["in contact", String(seen.length)]] });
-});
+    ctx.onDrawOver(d => {
+      if (!gs) return;
+      ...   // `seen`: who is above the mask now, for the panel line and the readout
+      d.marker(gs.lat, gs.lon, d.C.green, "site", gs.name,
+        { key: "gs", title: gs.name,
+          rows: [["mask", `${mask()}°`], ["in contact", String(seen.length)]].concat(
+            seen.slice(0, 6).map(([n, e]) => [n, `el ${e.toFixed(1)}°`])) });
+    });
 ```
 
 A marker's `key` must be the same on every redraw (`"gs"`, not a counter):
@@ -340,11 +357,12 @@ here limits the horizon footprints to the vehicles above the station's mask,
 through the core's footprint filter hook:
 
 ```js
-ctx.addDisplayToggle("footprints: only vehicles above the ground station's mask", false, v => {
-  onlyVisible = v;
-  ctx.redraw();
-});
-ctx.footprintFilter((tr, k) => (onlyVisible && gs ? elevation(tr, k) >= mask() : null));
+    ctx.addDisplayToggle("footprints: only vehicles above the ground station's mask", false, v => {
+      onlyVisible = v;
+      if (v && !gs) ctx.status("place a ground station first (ground station panel).", true);
+      ctx.redraw();
+    });
+    ctx.footprintFilter((tr, k) => (onlyVisible && gs ? elevation(tr, k) >= mask() : null));
 ```
 
 A filter answers `true` / `false` per vehicle, or `null` to stay out of it.
@@ -386,7 +404,8 @@ def test_loads_and_serves(app):
     c, reg = app
     assert reg.records["groundstation"].status == "loaded"
     r = c.get(f"/api/groundstation/contacts?{PLAN}&gs_lat=40&gs_lon=-105&min_el=10").get_json()
-    assert r["n"] > 0
+    assert r["n"] == len(r["contacts"]) > 0 and r["station"]["min_el_deg"] == 10
+    assert r["contacts"][0]["track"] == "track1" and 0 < r["coverage"]["fraction"] < 0.1
     assert c.get("/plugins/groundstation/groundstation.js").status_code == 200
 
 def test_switching_off_gates_the_route(app):

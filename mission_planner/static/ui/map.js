@@ -3,14 +3,17 @@
 // layers, agent scene) over a cached static group (staticLayers), plus pan /
 // zoom / click handling.
 
-// Sample index range [i0, i1] of the track inside the shown window; always
-// i0 <= i1 < t.length, and at least two samples when the track has them.
+// Sample index range [i0, i1] of the track inside the shown window: i0 <= i1
+// < t.length with at least two samples when the track has them, or an empty
+// range (i0 > i1) when the window misses the track altogether (one track of
+// several, shorter than the plan).
 function trackWindowIdx() {
   if (!plan) return [0, 0];
   const t = plan.track.t, n = t.length;
   if (n < 2) return [0, 0];
   const tEnd = planEnd();
   const lo = win[0] * tEnd, hi = win[1] * tEnd;
+  if (t[n - 1] < lo || t[0] > hi) return [1, 0];
   let i0 = t.findIndex(v => v >= lo); if (i0 < 0) i0 = 0;
   let i1 = n - 1;
   for (let i = n - 1; i >= 0; i--) if (t[i] <= hi) { i1 = i; break; }
@@ -22,6 +25,9 @@ function idxAtTime(ts, tr) {
   while (hi - lo > 1) { const m = (lo + hi) >> 1; (t[m] <= ts ? lo = m : hi = m); }
   return (ts - t[lo] < t[hi] - ts) ? lo : hi;
 }
+// Does the track exist at the playback time?  A vehicle of a multi-track plan
+// (a branch, a short run) is drawn only within its own span.
+const inSpan = tr => tr.t.length > 1 && tCur >= tr.t[0] && tCur <= tr.t[tr.t.length - 1];
 // Earth-relative flight path angle [deg] at sample k of a track: the angle
 // between the velocity and the local horizontal, atan2(dh/dt, r*dtheta/dt).
 // Backward difference off the earth-fixed track, so this is the relative
@@ -53,7 +59,7 @@ function pinGroup(info, lat, lon, at) {
   // The glyphs are 4-7 px across; give the pointer something to hit.
   el("circle", { cx:p.x, cy:p.y, r:11, fill:"transparent" }, g);
   // Swallow the press so the map does not read this as a pan or a map click.
-  g.addEventListener("mousedown", ev => ev.stopPropagation());
+  g.addEventListener("pointerdown", ev => ev.stopPropagation());
   g.addEventListener("click", ev => {
     ev.stopPropagation();
     pinOpen = pinOpen === info.key ? null : info.key;
@@ -101,7 +107,7 @@ function drawPin(p) {
   if (bx + w > view.x + view.w) bx = p.x - 12 * k - w;
   if (by + h > view.y + view.h) by = p.y - 8 * k - h;
   const g = el("g", { style:"cursor:pointer" });
-  g.addEventListener("mousedown", ev => ev.stopPropagation());
+  g.addEventListener("pointerdown", ev => ev.stopPropagation());
   g.addEventListener("click", ev => { ev.stopPropagation(); pinOpen = null; redraw(); });
   el("rect", { x:bx, y:by, width:w, height:h, rx:3 * k, fill:"rgba(252,252,251,.96)",
                stroke:C.grid, "stroke-width":k }, g);
@@ -128,8 +134,7 @@ function footprintsToDraw() {
   const filters = MP.live(MP._footprint), out = [];
   let opinion = false;
   for (const tr of planTracks()) {
-    const n = tr.t.length;
-    if (n < 2 || tCur < tr.t[0] || tCur > tr.t[n - 1]) continue;
+    if (!inSpan(tr)) continue;
     const k = idxAtTime(tCur, tr);
     let keep = null;
     for (const f of filters) {
@@ -142,7 +147,7 @@ function footprintsToDraw() {
     if (keep) out.push([tr, k]);
   }
   if (opinion) return out;
-  return display.horizon ? [[plan.track, idxAtTime(tCur)]] : [];
+  return display.horizon && inSpan(plan.track) ? [[plan.track, idxAtTime(tCur)]] : [];
 }
 function drawHorizon(tr, k, fill = 0.10) {
   const lat0 = tr.lat[k] * DEG, lon0 = tr.lon[k] * DEG;
@@ -287,10 +292,7 @@ function redraw() {
   }
 
   // module map layers, under the ground track
-  for (const fn of MP.live(MP._layers)) {
-    try { fn(layerCtx()); }
-    catch (e) { console.error("module layer:", e); }
-  }
+  MP.fire(MP._layers, "module layer", layerCtx());
 
   // day/night terminator at scrub time
   if (plan && display.night) {
@@ -342,7 +344,7 @@ function redraw() {
       orbit3d ? spacePoint(orbitVec(ap.lat_deg, ap.lon_deg, ap.alt_km, ap.t_s))
               : project(ap.lat_deg, ap.lon_deg)]);
     const k = idxAtTime(tCur);
-    if (k >= i0 && k <= i1) {
+    if (inSpan(tr) && k >= i0 && k <= i1) {
       let ps = project(tr.lat[k], tr.lon[k]);
       if (orbit3d) {   // the satellite at altitude, tied to its subpoint
         const v = orbitVec(tr.lat[k], tr.lon[k], tr.alt_km[k], tr.t[k]);
@@ -397,10 +399,7 @@ function redraw() {
   if (plan?.tracks) drawOtherTracks(true);
 
   // module map layers drawn ON TOP of the track (markers, callouts)
-  for (const fn of MP.live(MP._over)) {
-    try { fn(layerCtx()); }
-    catch (e) { console.error("module layer:", e); }
-  }
+  MP.fire(MP._over, "module layer", layerCtx());
 
   // agent scene layers (the legend goes with the scene)
   if (scene) drawScene();
@@ -435,7 +434,7 @@ function drawOtherTracks(colored) {
                     opacity: tr.color ? .65 : .22, "pointer-events":"none" };
     if (orbit3d) spaceLine(pts, attrs);
     else polyline(pts, attrs);
-    if (tCur < t[0] || tCur > t[n - 1]) continue;
+    if (!inSpan(tr)) continue;
     const k = idxAtTime(tCur, tr);
     const at = orbit3d ? spacePoint(orbitVec(tr.lat[k], tr.lon[k], tr.alt_km[k], t[k])) : null;
     marker(tr.lat[k], tr.lon[k], tr.color || "#7ea6d6", "dot", "",
@@ -505,14 +504,34 @@ function drawScene() {
     return { x: p.x, y: p.y };
   };
   const clampY = y => Math.max(0, Math.min(H - view.h, y));
-  svg.addEventListener("mousedown", ev => {
+  // Pointer events cover the mouse, a finger and a pen alike (style.css sets
+  // touch-action: none on the map, so the browser leaves the gestures to us).
+  // One pointer pans; two pinch-zoom; the wheel zooms; a double click/tap
+  // resets the view.
+  const pointers = new Map();   // pointerId -> last client position
+  let pinch = null;             // {dist, mid} of the last two-finger sample
+  svg.addEventListener("pointerdown", ev => {
     // A drag is a pan/rotate, never a text selection (labels, or the side panel
-    // if the pointer strays onto it).
+    // if the pointer strays onto it): no compatibility mouse events.
     ev.preventDefault();
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pointers.size === 2) {        // a second finger: the pan becomes a pinch
+      down = null; pinch = pinchOf();
+      return;
+    }
+    if (pointers.size > 2) return;
     down = { ev, lonC, latC, y: view.y, scale: svg.getScreenCTM().a };
     moved = false; svg.classList.add("dragging");
   });
-  window.addEventListener("mousemove", ev => {
+  window.addEventListener("pointermove", ev => {
+    if (!pointers.has(ev.pointerId)) return;
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pinch) {
+      const now = pinchOf();
+      if (now.dist > 0 && pinch.dist > 0) zoomAt(toMap(now.mid), pinch.dist / now.dist);
+      pinch = now;
+      return;
+    }
     if (!down) return;
     const dx = (ev.clientX - down.ev.clientX) / down.scale;
     const dy = (ev.clientY - down.ev.clientY) / down.scale;
@@ -532,27 +551,32 @@ function drawScene() {
     }
     redraw();
   });
-  window.addEventListener("mouseup", ev => {
+  const pointerUp = ev => {
+    pointers.delete(ev.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (!down) return;
     svg.classList.remove("dragging");
-    if (down && !moved) {
+    if (!moved && ev.type === "pointerup") {
       const p = toMap(ev), ll = unproject(p.x, p.y);
-      if (ll)
-        for (const fn of MP.live(MP._clicks)) {
-          try { fn(ll.lat, ll.lon); }
-          catch (e) { console.error("module click:", e); }
-        }
+      if (ll) MP.fire(MP._clicks, "module click", ll.lat, ll.lon);
     }
     down = null;
-  });
-  svg.addEventListener("wheel", ev => {
-    ev.preventDefault();
-    const f = ev.deltaY > 0 ? 1.2 : 1/1.2;
+  };
+  window.addEventListener("pointerup", pointerUp);
+  window.addEventListener("pointercancel", pointerUp);
+  // Distance and midpoint (client px) of the two pointers down.
+  function pinchOf() {
+    const [a, b] = [...pointers.values()];
+    return { dist: Math.hypot(b.x - a.x, b.y - a.y),
+             mid: { clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 } };
+  }
+  // Zoom by `f` (> 1 zooms out) keeping map point `p` where it is.
+  function zoomAt(p, f) {
     const w = Math.min(W, Math.max(40, view.w * f)), h = w / 2;
     if (projMode !== "map") {
       view = { x: GLOBE.cx - w / 2, y: GLOBE.cy - h / 2, w, h };
       return redraw();
     }
-    const p = toMap(ev);
     const fx = (p.x - view.x) / view.w, fy = (p.y - view.y) / view.h;
     const cursorLon = p.x / S - 180 + lonC;
     // Keep the view box centred and put the cursor's longitude back under
@@ -561,6 +585,10 @@ function drawScene() {
     lonC = normLon(cursorLon - (view.x + fx * w) / S + 180);
     view.y = clampY(p.y - fy * h);
     redraw();
+  }
+  svg.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    zoomAt(toMap(ev), ev.deltaY > 0 ? 1.2 : 1/1.2);
   }, { passive:false });
   svg.addEventListener("dblclick", () => { view = { x:0, y:0, w:W, h:H }; redraw(); });
 })();

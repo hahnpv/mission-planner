@@ -109,8 +109,11 @@ class Menubar {
       row.innerHTML = `<span class="mb-mark"></span><span class="mb-label"></span>`;
       row.children[0].textContent = mark;
       row.children[1].textContent = it.label;
-      if (it.swatch) row.children[1].insertAdjacentHTML("afterbegin",
-        `<span class="mb-sw" style="background:${it.swatch}"></span>`);
+      if (it.swatch) {   // a colour from data: set it as a property, never as markup
+        const sw = document.createElement("span");
+        sw.className = "mb-sw"; sw.style.background = it.swatch;
+        row.children[1].prepend(sw);
+      }
       const val = f => typeof f === "function" ? f() : f;
       const detail = val(it.detail), badges = val(it.badges) || [];
       if (badges.length || detail) {
@@ -142,8 +145,11 @@ class Menubar {
   flag(name, color) {
     const btn = this.menu(name).btn;
     btn.querySelector(".mb-flag")?.remove();
-    if (color) btn.insertAdjacentHTML("beforeend",
-      `<span class="mb-flag" style="background:${color}"></span>`);
+    if (color) {
+      const dot = document.createElement("span");
+      dot.className = "mb-flag"; dot.style.background = color;
+      btn.appendChild(dot);
+    }
   }
 
   close() {

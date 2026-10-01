@@ -31,25 +31,42 @@ def test_density_keeps_falling_above_the_table():
 
 
 def test_iss_class_decays_slowly():
-    # ~400 km, beta ~ 130 kg/m^2: nominal lifetime is months-to-a-year+.
+    # ~400 km, beta ~ 130 kg/m^2: a few km a month at this (quiet-sun) density.
     orb = Orbit.circular(400.0, 51.6, epoch=EPOCH)
     gt = orb.ground_track(30 * DAY, dt_s=600.0, mode="decay", beta=130.0)
     assert gt.extra["entry"] is None  # still up after 30 days
     fall_km = (gt.alt[0] - gt.alt[-1]) * 1e-3
-    assert 1.0 < fall_km < 60.0  # a few km/month nominal
+    assert fall_km == pytest.approx(2.7, rel=0.3)  # pinned: a 2x density change would show
+    # The plot profile is decimated to ~1500-3000 points and ends where the track does.
+    p = gt.extra["decay_profile"]
+    n, step = len(gt.t), max(1, len(gt.t) // 1500)
+    assert len(p["t"]) <= n // step + 1 < n and p["t"][-1] == gt.t[-1]
+    assert p["alt_km"][0] == pytest.approx(400.0, abs=0.01)
 
 
 def test_low_orbit_decays_in_days():
-    # 200 km, beta = 300: comes down within days.
+    # 200 km, beta = 300: comes down within a week.
     orb = Orbit.circular(200.0, 60.0, epoch=EPOCH)
     gt = orb.ground_track(20 * DAY, dt_s=300.0, mode="decay", beta=300.0)
     entry = gt.extra["entry"]
     assert entry is not None
-    assert 0.2 * DAY < entry["t_s"] < 15 * DAY
+    assert entry["t_s"] == pytest.approx(6.9 * DAY, rel=0.3)
+    assert entry["t_s"] == gt.t[-1] and abs(entry["lat_deg"]) <= 60.0  # inside the inclination
+    assert entry["epoch_utc"].startswith("2026-08-27T") and -180 <= entry["lon_deg"] <= 180
     # Terminates at the 100 km interface.
     assert gt.alt[-1] * 1e-3 == pytest.approx(100.0, abs=2.0)
     # Altitude decreases monotonically.
     assert np.all(np.diff(gt.alt) < 0)
+
+
+def test_decay_samples_are_the_kepler_samples():
+    orb = Orbit.circular(300.0, 45.0, epoch=EPOCH)
+    for duration in (105.0, 120.0, 0.0):
+        k = orb.ground_track(duration, 30.0).t
+        d = orb.ground_track(duration, 30.0, mode="decay", beta=100.0).t
+        assert d.tolist() == k.tolist(), duration
+    assert orb.ground_track(105.0, 30.0, mode="decay", beta=100.0).t.tolist() == [0, 30, 60, 90]
+    assert orb.ground_track(0.0, 30.0, mode="decay", beta=100.0).t.tolist() == [0.0]
 
 
 def test_lifetime_pinned_against_quadrature():
@@ -88,7 +105,7 @@ def test_decay_starts_where_kepler_starts():
     )
 
 
-def test_decay_requires_beta_and_a_moderate_eccentricity():
+def test_decay_requires_beta_a_moderate_eccentricity_and_a_perigee_above_the_interface():
     orb = Orbit.circular(300.0, 45.0, epoch=EPOCH)
     with pytest.raises(ValueError, match="beta"):
         orb.ground_track(DAY, mode="decay")
@@ -98,6 +115,9 @@ def test_decay_requires_beta_and_a_moderate_eccentricity():
     with pytest.raises(ValueError, match=r"e <= 0\.2"):
         gto.ground_track(DAY, mode="decay", beta=300.0)
     Orbit.from_elements(300.0, 3500.0, 51.6, EPOCH).ground_track(600.0, mode="decay", beta=300.0)
+    low = Orbit.from_elements(90.0, 400.0, 51.6, EPOCH)
+    with pytest.raises(ValueError, match="starts above the 100 km entry interface .*90 km"):
+        low.ground_track(DAY, mode="decay", beta=300.0)
 
 
 def test_king_hele_series_matches_the_exact_integrals(monkeypatch):

@@ -87,10 +87,13 @@ only when decay is fast, so weeks-long horizons stay cheap. The track is the
 position on the ellipse of those elements, so its altitude swings between
 perigee and apogee. It stops when **perigee reaches the 100 km entry
 interface** and reports where and when; the decay profile carries the mean,
-perigee and apogee altitudes.
+perigee and apogee altitudes. The samples fall at the Kepler track's times
+for the same horizon and step, so switching modes doesn't move them. An
+orbit whose perigee already lies below the interface is refused.
 
 Density $\rho(h)$ is the **US Standard Atmosphere 1976**, extended to
-1000 km and extrapolated log-linearly above that. It is a **static**
+1000 km and extrapolated log-linearly above that (a scale height of about
+240 km). It is a **static**
 atmosphere: no solar cycle (F10.7), geomagnetic activity or day/night
 bulge. Real thermospheric density swings by factors of a few over the solar
 cycle, so decay lifetimes here are **nominal, not predictions**.
@@ -99,11 +102,35 @@ cycle, so decay lifetimes here are **nominal, not predictions**.
 
 `from_launch_site` places the orbit plane over the site at the epoch: the
 argument of latitude at the site comes from $\sin u = \sin\phi / \sin i$, and
-the node from the site's inertial longitude. No inclination below the site's
-latitude can pass over it. The launch azimuth is the inertial one,
-$\sin A = \cos i / \cos\phi$, corrected for the eastward velocity of the
-launch site at the orbital speed. There is no ascent: the vehicle is simply
-in orbit over the site at t = 0.
+the node from the site's inertial longitude. Only inclinations with
+$|\phi| \le i \le 180° - |\phi|$ can pass over the site. The launch azimuth
+is the inertial one, $\sin A = \cos i / \cos\phi$, corrected for the eastward
+velocity of the launch site at the orbital speed. There is no ascent: the
+vehicle is simply in orbit over the site at t = 0.
+
+## Manoeuvre budgets
+
+The maneuver planner is impulsive and **circular-to-circular**: every burn
+is instantaneous, every orbit before and after is circular, and all of it
+is two-body (no J2, no drag, no finite-burn losses). With $v_c = \sqrt{\mu/r}$:
+
+- **Hohmann** between radii $r_1$ and $r_2$: the transfer ellipse has
+  $a_t = (r_1 + r_2)/2$ and vis-viva speeds $v_t = \sqrt{\mu(2/r - 1/a_t)}$
+  at each end; $\Delta v_1 = |v_{t1} - v_{c1}|$, $\Delta v_2 = |v_{c2} - v_{t2}|$,
+  transfer time half the ellipse's period.
+- **Plane change** by $\Delta i$ alone, at circular speed:
+  $\Delta v = 2 v_c \sin(\Delta i / 2)$. **Combined**, the rotation is folded
+  into the Hohmann burn at the larger radius (where speed is lowest) by the
+  law of cosines, $\Delta v = \sqrt{v_c^2 + v_t^2 - 2 v_c v_t \cos\Delta i}$,
+  with the other burn coplanar.
+- **Phasing** a target `lead_deg` ahead (positive) or behind: one revolution
+  on an ellipse whose period is the circular one scaled by
+  $1 - \text{lead}/360°$, entered and left with equal burns; the result
+  carries the other apsis altitude and is flagged infeasible when that
+  perigee dips below 120 km.
+- **Deorbit** from the target orbit: the retro burn that drops perigee to
+  the 100 km interface, $\Delta v = v_c - v_{apo}$ on the ellipse with
+  $a = (r + r_{100})/2$, and the half-period coast to it.
 
 ## Sun-synchronous orbits
 

@@ -1,20 +1,19 @@
-"""Plugin API: dependency chains, live switches, catalog packs, server gating.
+"""Plugin API: dependency chains, live switches, server gating, plugin
+sources and propagators.
 
 Runs against fake plugins so the core's tests never need a real plugin
 package installed.
 """
 
-import textwrap
+import functools
 from datetime import datetime, timezone
 
 import pytest
 from flask import Blueprint, jsonify
+from helpers import core_registry, write_pack
 
-import mission_planner.plugins as plugins
-import mission_planner.server as server
-from mission_planner import SITES, Orbit
-from mission_planner.catalog import merged
-from mission_planner.plugins import API_VERSION, CORE_CATALOG, Registry, builtin_sources
+from mission_planner import Orbit
+from mission_planner.plugins import API_VERSION, Registry, builtin_sources
 
 EPOCH = datetime(2026, 8, 21, 0, 0, tzinfo=timezone.utc)
 
@@ -47,6 +46,11 @@ def test_unavailability_propagates_down_a_chain_naming_the_link():
     assert not any(reg.active(n) for n in "abc")
 
 
+def test_an_availability_check_that_raises_is_unavailable_not_fatal():
+    r = reg_of({"name": "a", "available": lambda: 1 / 0}).records["a"]
+    assert r.status == "unavailable" and "availability check raised ZeroDivisionError" in r.error
+
+
 def test_cycle_fails_its_members():
     reg = reg_of({"name": "a", "requires": ["b"]}, {"name": "b", "requires": ["a"]})
     statuses = {reg.records[n].status for n in "ab"}
@@ -58,6 +62,8 @@ def test_cycle_fails_its_members():
     "spec, why",
     [
         ({"name": "a", "api": API_VERSION + 1}, "plugin API"),
+        ({"name": "a", "api": 0}, "plugin API"),
+        ({"name": "a", "api": True}, "plugin API"),  # a bool is an int to Python, not to us
         ({"name": "a", "requires": "b"}, "list of plugin names"),
         ({"title": "no name"}, "string 'name'"),
         ({"name": "a", "works_with": ["orbit", "boat"]}, "'works_with'"),
@@ -71,7 +77,11 @@ def test_cycle_fails_its_members():
         ({"name": "a", "catalog": 123}, "'catalog' must be a path"),
         ({"name": "a", "static_dir": 123}, "'static_dir' must be a path"),
         ({"name": "a", "blueprint": "notabp"}, "flask Blueprint"),
-        ({"name": "a", "mcp_tools": [1]}, "'mcp_tools' must be a list of functions"),
+        ({"name": "a", "mcp_tools": [1]}, "'mcp_tools' must be a list of named functions"),
+        (
+            {"name": "a", "mcp_tools": [functools.partial(print, "x")]},  # callable, no __name__
+            "'mcp_tools' must be a list of named functions",
+        ),
         ({"name": "a", "available": "yes"}, "'available' must be a callable"),
         ({"name": "a", "title": 3}, "'title' must be a string"),
         ({"name": ""}, "non-empty string 'name'"),
@@ -160,15 +170,17 @@ def test_core_ids_cannot_be_claimed_by_a_plugin():
     def plan_orbit():
         pass
 
-    reg = Registry(
-        [
-            *builtin_sources(),
-            src({"name": "q", "mcp_tools": [plan_orbit]}),
-            src({"name": "r", "blueprint": Blueprint("passes", __name__)}),
-        ]
+    def track_samples():
+        pass
+
+    reg = core_registry(
+        {"name": "q", "mcp_tools": [plan_orbit]},
+        {"name": "r", "blueprint": Blueprint("passes", __name__)},
+        {"name": "s", "mcp_tools": [track_samples]},
     )
     assert "MCP tool 'plan_orbit' is already provided by core" == reg.records["q"].error
     assert "blueprint 'passes' is already provided by plugin 'passes'" == reg.records["r"].error
+    assert "MCP tool 'track_samples' is already provided by core" == reg.records["s"].error
 
 
 def test_env_disable_of_an_unknown_name_is_reported_not_fatal(monkeypatch, capsys):
@@ -216,44 +228,6 @@ def test_plugin_mode_dispatch_follows_the_switch():
         reg.propagator("nope")
 
 
-# ---------------------------------------------------------------- catalog
-
-
-def test_core_catalog_is_generic():
-    cat = merged([("core", CORE_CATALOG)])
-    assert "Cape Canaveral / KSC" in [s["name"] for s in cat["sites"]]
-    assert {p["name"] for p in cat["presets"]} >= {"ISS", "GEO", "Molniya", "Sun-synchronous"}
-    assert cat["overlays"] == []  # overlays come from data packs
-
-
-def write_pack(path):
-    (path / "overlays").mkdir(parents=True)
-    (path / "sites.yaml").write_text(
-        "- {name: Test Range, lat: 22.0, lon: -159.8}\n- {name: Kodiak, lat: 57.5, lon: -152.0}\n"
-    )
-    (path / "overlays" / "box.geojson").write_text(
-        '{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {},'
-        ' "geometry": {"type": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,0]]]}}]}'
-    )
-    (path / "overlays" / "box.yaml").write_text(
-        textwrap.dedent("""\
-            title: A box
-            style: {color: "#123456", opacity: 0.2}
-            source: {dataset: unit test}
-        """)
-    )
-    return path
-
-
-def test_packs_merge_override_and_carry_overlay_sidecars(tmp_path):
-    cat = merged([("core", CORE_CATALOG), ("pk", write_pack(tmp_path))])
-    sites = {s["name"]: s for s in cat["sites"]}
-    assert sites["Test Range"]["pack"] == "pk"
-    assert sites["Kodiak"]["lat"] == 57.5 and sites["Kodiak"]["pack"] == "pk"  # later wins
-    (ov,) = cat["overlays"]
-    assert ov["name"] == "A box" and ov["style"]["color"] == "#123456" and ov["pack"] == "pk"
-
-
 # ---------------------------------------------------------------- server over a fake registry
 
 fake_bp = Blueprint("fakeplug", __name__)
@@ -268,6 +242,14 @@ def _slow_mode(orbit, beta, duration_s, dt_s):
     return orbit.ground_track(duration_s, dt_s)
 
 
+def _crashing_mode(orbit, beta, duration_s, dt_s):
+    raise KeyError("state")  # the plugin's bug
+
+
+def _picky_mode(orbit, beta, duration_s, dt_s):
+    raise ValueError("beta too low for this mode")  # the user's input
+
+
 def _orbit_source(a):
     """An orbit source: a circular orbit at the requested altitude."""
     return Orbit.circular(float(a.get("alt", 500.0)), 45.0, epoch=EPOCH), {"title": "fake orbit"}
@@ -278,11 +260,10 @@ def _track_source(a):
     import numpy as np
 
     from mission_planner.groundtrack import GroundTrack
-    from mission_planner.timebase import as_utc
 
     n = int(a.get("n", 11))
     gt = GroundTrack(
-        epoch=as_utc(datetime(2026, 8, 23)),
+        epoch=datetime(2026, 8, 23),  # naive: UTC
         t=np.arange(n) * 10.0,
         lat=np.radians(np.linspace(0.0, 10.0, n)),
         lon=np.zeros(n),
@@ -292,7 +273,7 @@ def _track_source(a):
 
 
 @pytest.fixture
-def fake(monkeypatch, tmp_path):
+def fake(app_with, tmp_path):
     specs = [
         {
             "name": "fakeplug",
@@ -300,7 +281,11 @@ def fake(monkeypatch, tmp_path):
             "blueprint": fake_bp,
             "js": "fake.js",
             "static_dir": tmp_path,
-            "propagators": {"slowfake": {"fn": _slow_mode, "label": "slow fake", "slow": True}},
+            "propagators": {
+                "slowfake": {"fn": _slow_mode, "label": "slow fake", "slow": True},
+                "crash": {"fn": _crashing_mode},
+                "picky": {"fn": _picky_mode},
+            },
             "sources": {
                 "fakeorb": {"fn": _orbit_source, "label": "Fake orbit", "kind": "orbit"},
                 "faketrack": {"fn": _track_source, "label": "Fake track", "kind": "trajectory"},
@@ -310,9 +295,7 @@ def fake(monkeypatch, tmp_path):
         {"name": "needy", "requires": ["fakeplug"]},
     ]
     (tmp_path / "fake.js").write_text("MP.register({title: 'fake', html: '', init() {}});")
-    reg = Registry([*builtin_sources(), *(src(s) for s in specs)])
-    monkeypatch.setattr(plugins, "_REGISTRY", reg)
-    return server.create_app().test_client(), reg
+    return app_with(*specs)
 
 
 QS = "site=Cape+Canaveral+%2F+KSC&hp=400&inc=51.6&hours=2&epoch=2026-08-23T00:00:00%2B00:00"
@@ -325,11 +308,16 @@ def test_modules_endpoint_lists_builtins_and_plugins(fake):
     f = mods["fakeplug"]
     assert not f["builtin"] and f["active"] and f["routes"]
     assert f["js_url"] == "/plugins/fakeplug/fake.js"
-    assert f["modes"] == [
-        {"mode": "slowfake", "label": "slow fake", "needs_beta": False, "slow": True}
-    ]
+    assert f["modes"][0] == {
+        "mode": "slowfake",
+        "label": "slow fake",
+        "needs_beta": False,
+        "slow": True,
+    }
+    assert [m["mode"] for m in f["modes"]] == ["slowfake", "crash", "picky"]
     assert mods["pack"]["catalog"] and mods["needy"]["requires"] == ["fakeplug"]
-    assert client.get("/plugins/fakeplug/fake.js").status_code == 200
+    r = client.get("/plugins/fakeplug/fake.js")
+    assert r.status_code == 200 and b"MP.register" in r.data
 
 
 def test_switching_off_gates_routes_modes_and_dependents(fake):
@@ -347,7 +335,19 @@ def test_switching_off_gates_routes_modes_and_dependents(fake):
     assert client.get("/api/fakeplug").status_code == 200
 
 
-def test_nested_blueprint_routes_are_gated_too(monkeypatch):
+def test_a_crashing_propagator_is_a_500_naming_its_plugin_and_mode(fake):
+    client, _ = fake
+    r = client.get(f"/api/plan?{QS}&mode=crash")
+    assert r.status_code == 500
+    assert r.get_json()["error"] == (
+        "PluginError: mode 'crash' (plugin 'fakeplug') failed: KeyError: 'state'"
+    )
+    # ... while a ValueError is the user's problem, a plain 400.
+    r = client.get(f"/api/plan?{QS}&mode=picky")
+    assert r.status_code == 400 and r.get_json()["error"] == "beta too low for this mode"
+
+
+def test_nested_blueprint_routes_are_gated_too(app_with):
     parent = Blueprint("outer", __name__)
     child = Blueprint("inner", __name__, url_prefix="/inner")
 
@@ -356,26 +356,30 @@ def test_nested_blueprint_routes_are_gated_too(monkeypatch):
         return jsonify({"ok": True})
 
     parent.register_blueprint(child)
-    reg = Registry([*builtin_sources(), src({"name": "nested", "blueprint": parent})])
-    monkeypatch.setattr(plugins, "_REGISTRY", reg)
-    client = server.create_app().test_client()
+    client, reg = app_with({"name": "nested", "blueprint": parent})
     assert client.get("/inner/ping").status_code == 200
     reg.set_enabled("nested", False)
     assert client.get("/inner/ping").status_code == 404
 
 
-def test_unregistrable_blueprint_fails_its_plugin_not_the_server(monkeypatch):
+def test_unregistrable_blueprint_fails_its_plugin_and_its_dependents_not_the_server(app_with):
     class Broken:
         name = "broken"
 
         def register(self, app, options):
             raise RuntimeError("no routes for you")
 
-    reg = Registry([*builtin_sources(), src({"name": "bad", "blueprint": Broken()})])
-    monkeypatch.setattr(plugins, "_REGISTRY", reg)
-    client = server.create_app().test_client()
-    rec = next(m for m in client.get("/api/modules").get_json() if m["name"] == "bad")
-    assert rec["status"] == "failed" and "no routes for you" in rec["error"]
+    client, reg = app_with(
+        {"name": "bad", "blueprint": Broken()}, {"name": "needs_bad", "requires": ["bad"]}
+    )
+    mods = {m["name"]: m for m in client.get("/api/modules").get_json()}
+    assert mods["bad"]["status"] == "failed" and "no routes for you" in mods["bad"]["error"]
+    # Failing after load re-resolves the chain: the dependent is unavailable,
+    # not merely waiting, and can't be switched on.
+    assert mods["needs_bad"]["status"] == "unavailable" and "'bad'" in mods["needs_bad"]["error"]
+    assert not reg.active("needs_bad")
+    r = client.post("/api/modules/needs_bad", json={"enabled": True})
+    assert r.status_code == 409 and "unavailable" in r.get_json()["error"]
 
 
 def test_toggle_rejects_bad_requests(fake):
@@ -385,33 +389,19 @@ def test_toggle_rejects_bad_requests(fake):
     assert client.post("/api/modules/passes", json={"enabled": False}).status_code == 409
 
 
-def test_data_pack_switches_the_catalog(fake):
-    client, _ = fake
-    names = lambda: [s["name"] for s in client.get("/api/sites").get_json()]  # noqa: E731
-    assert "Test Range" in names() and "Test Range" in SITES
-    assert [o["name"] for o in client.get("/api/overlays").get_json()] == ["A box"]
-    client.post("/api/modules/pack", json={"enabled": False})
-    assert "Test Range" not in names() and "Test Range" not in SITES
-    assert client.get("/api/overlays").get_json() == []
-
-
-def test_slow_mode_runs_as_a_plan_job(fake):
-    import time
-
+def test_slow_mode_runs_as_a_plan_job(fake, wait_job):
     client, _ = fake
     job = client.post(f"/api/plan_job?{QS}&mode=slowfake").get_json()
-    for _ in range(100):
-        res = client.get(f"/api/plan_job/{job['job_id']}").get_json()
-        if res["status"] != "running":
-            break
-        time.sleep(0.05)
+    res = wait_job(lambda: client.get(f"/api/plan_job/{job['job_id']}").get_json())
     assert res["status"] == "done" and len(res["track"]["lat"]) > 10
+    assert res["args"]["mode"] == "slowfake"
     assert client.post(f"/api/plan_job?{QS}&mode=nope").status_code == 400
 
 
 def test_orbit_ground_track_reaches_plugin_modes(fake):
     orb = Orbit.circular(400.0, 51.6, epoch=EPOCH)
-    assert len(orb.ground_track(3600.0, 60.0, mode="slowfake").lat) == 61
+    gt = orb.ground_track(3600.0, 60.0, mode="slowfake")
+    assert len(gt.lat) == 61 and gt.t[-1] == 3600.0
 
 
 # ---------------------------------------------------------------- trajectory sources
@@ -428,16 +418,6 @@ def test_modules_endpoint_lists_sources_and_what_modules_work_with(fake):
     assert mods["maneuvers"]["works_with"] == ["orbit"]  # the default
 
 
-def test_core_sources_and_the_pre_source_convention_agree(fake):
-    client, _ = fake
-    shape = "hp=500&ha=39868&inc=63.4&argp=270&node_lon=65&hours=2&epoch=2026-08-23T00:00:00Z"
-    old = client.get(f"/api/plan?anchor=elements&{shape}").get_json()
-    new = client.get(f"/api/plan?source=preset&{shape}").get_json()
-    assert old == new and new["summary"]["source"] == "preset"
-    site = client.get(f"/api/plan?{QS}").get_json()["summary"]
-    assert site["source"] == "site" and site["kind"] == "orbit"
-
-
 def test_orbit_source_is_propagated_like_a_core_orbit(fake):
     client, _ = fake
     res = client.get("/api/plan?source=fakeorb&alt=600&hours=1&dt=60&mode=slowfake").get_json()
@@ -451,6 +431,7 @@ def test_trajectory_source_comes_finished(fake):
     res = client.get("/api/plan?source=faketrack&n=21&hours=99&mode=nope").get_json()
     assert res["summary"] == {"source": "faketrack", "kind": "trajectory", "title": "fake track"}
     assert len(res["track"]["lat"]) == 21 and "apsides" not in res["track"]
+    assert res["track"]["epoch_utc"] == "2026-08-23T00:00:00+00:00"  # the naive epoch, as UTC
     # modules that only need a track work on it ...
     win = client.get("/api/passes?source=faketrack&tgt_lat=5&tgt_lon=0&within_km=50").get_json()
     assert win["n"] == 1
@@ -471,14 +452,20 @@ def test_sources_follow_the_switch(fake):
     assert "unknown source 'nope'" in unknown and "site|preset" in unknown
 
 
-def test_trajectory_source_runs_as_a_plan_job_without_a_mode(fake):
-    import time
-
+def test_trajectory_source_runs_as_a_plan_job_without_a_mode(fake, wait_job):
     client, _ = fake
     job = client.post("/api/plan_job?source=faketrack&mode=nope").get_json()
-    for _ in range(100):
-        res = client.get(f"/api/plan_job/{job['job_id']}").get_json()
-        if res["status"] != "running":
-            break
-        time.sleep(0.05)
+    res = wait_job(lambda: client.get(f"/api/plan_job/{job['job_id']}").get_json())
     assert res["status"] == "done" and res["summary"]["kind"] == "trajectory"
+
+
+def test_builtin_sources_are_the_modules_package_only():
+    names = {name for name, builtin, _ in builtin_sources()}
+    assert {"passes", "maneuvers", "decay", "files", "sso"} <= names
+    assert all(builtin for _, builtin, _ in builtin_sources())
+
+
+def test_a_helper_file_without_a_spec_is_not_a_module():
+    reg = Registry([("helper", True, lambda: None), src({"name": "a"})])
+    assert list(reg.records) == ["a"]
+    assert reg.owner_of("sources", "nope") is None and reg.static_dir("nope") is None

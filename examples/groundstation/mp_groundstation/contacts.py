@@ -93,14 +93,14 @@ def contacts(gt, lat_deg: float, lon_deg: float, min_el_deg: float = 10.0) -> li
 
 
 def coverage(windows: list[dict], span_s: float) -> dict:
-    """Summary of a station's contact windows over a span: how many, total
-    and mean contact time, the fraction of the span in contact, and the
-    longest gap without contact (including before the first and after the
-    last window)."""
+    """Summary of a station's contact windows over a span: how many, the mean
+    length of one, the time in contact with at least one track (`total_s`:
+    windows from several tracks may overlap, so it can be less than n times
+    the mean), the fraction of the span that is, and the longest gap without
+    contact (including before the first and after the last window)."""
     if span_s <= 0:
         return {"n": 0, "total_s": 0.0, "mean_s": 0.0, "fraction": 0.0, "longest_gap_s": 0.0}
     spans = sorted((w["aos_t_s"], w["los_t_s"]) for w in windows)
-    # Windows from several tracks may overlap: merge them for the time in contact.
     merged: list[list[float]] = []
     for a, b in spans:
         if merged and a <= merged[-1][1]:
@@ -113,7 +113,7 @@ def coverage(windows: list[dict], span_s: float) -> dict:
     return {
         "n": len(windows),
         "total_s": round(total, 1),
-        "mean_s": round(total / len(merged), 1) if merged else 0.0,
+        "mean_s": round(sum(b - a for a, b in spans) / len(spans), 1) if spans else 0.0,
         "fraction": round(total / span_s, 4),
         "longest_gap_s": round(max(gaps), 1),
     }

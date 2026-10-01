@@ -17,8 +17,6 @@ import traceback
 import uuid
 from collections.abc import Callable
 
-_ENVELOPE = ("status", "elapsed_s", "error")
-
 
 class JobStore:
     def __init__(self, keep: int = 8):
@@ -44,12 +42,15 @@ class JobStore:
                 traceback.print_exc()
                 update = {"status": "error", "error": f"{type(e).__name__}: {e}"}
             with self._lock:
-                self._jobs[job_id].update(update)
+                self._jobs[job_id].update(update, finished=time.time())
 
         threading.Thread(target=work, daemon=True).start()
         return job_id
 
     def poll(self, job_id: str) -> dict | None:
+        """The job's result (once done) under an envelope that always wins:
+        status (running | done | error), elapsed_s (its run time so far, or
+        in all once it has finished) and, on error, error."""
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -58,7 +59,7 @@ class JobStore:
             if job["status"] == "done":
                 out.update(job["result"])
             out["status"] = job["status"]
-            out["elapsed_s"] = round(time.time() - job["started"], 1)
+            out["elapsed_s"] = round(job.get("finished", time.time()) - job["started"], 1)
             if job["status"] == "error":
                 out["error"] = job["error"]
         return out
