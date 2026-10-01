@@ -23,7 +23,7 @@ It speaks MCP over stdio; register it with your client as shown in
 | `track_samples(..., max_points=500, start_hours=0, end_hours=None)` | the ground track itself, as columns `t_s`, `lat_deg`, `lon_deg`, `alt_km`, evenly downsampled over a window (at most 5000 points) |
 | `find_passes(tgt_lat, tgt_lon, ...)` | overflight windows of a target: UTC entry, exit and closest approach, miss distance, heading and leg |
 | `maneuver_budget(alt1_km, inc1_deg, alt2_km, inc2_deg, lead_deg=None)` | impulsive Δv between two circular orbits: Hohmann, plane change separate or combined, optional phasing, deorbit to 100 km |
-| `load_file(path, epoch_utc=None, options=None)` | stores a trajectory file for the UI's File source and returns what the plugin that reads it found |
+| `load_file(path, epoch_utc=None, options=None)` | stores a trajectory file (KML / KMZ in the core; plugins add formats) for the UI's File source and returns what its reader found |
 | `show_plan(...)` | plans an orbit and shows it in the running UI as its plan — with a target, its passes are marked and listed too |
 | `show_scene(scene)` | pushes a drawing (tracks, markers, polygons, labels, tables, optionally a plan) to the running UI |
 

@@ -111,7 +111,7 @@ def test_page_loads_with_every_module_and_the_example_plugin(page):
     mods = page.evaluate(
         "() => Object.fromEntries(Object.values(MP.mods).map(m => [m.name, m.status]))"
     )
-    assert {"passes", "maneuvers", "decay", "files", "sso", "groundstation"} <= set(mods)
+    assert {"passes", "maneuvers", "decay", "files", "sso", "kml", "groundstation"} <= set(mods)
     assert set(mods.values()) == {"loaded"}
     # Every module that ships a script registered a panel, without a JS error.
     unregistered = page.evaluate(
@@ -215,6 +215,35 @@ def test_a_trajectory_plan_makes_orbit_only_modules_inert(page):
     assert page.evaluate("() => plan.track.id === 'a'") and track_drawn(page) == 0
     page.evaluate("() => { setWindow(0, 1); redraw(); }")
     assert track_drawn(page) > 0
+
+
+KML = (
+    '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">'
+    "<Placemark><name>Sat</name><gx:Track>"
+    + "".join(f"<when>2026-10-01T12:{m:02d}:00Z</when>" for m in range(0, 60, 5))
+    + "".join(f"<gx:coord>{-80 + 4 * k} {28 - 2 * k} 400000</gx:coord>" for k in range(12))
+    + "</gx:Track></Placemark></kml>"
+).encode()
+
+
+def test_a_kml_file_plans_without_any_plugin(page):
+    """The core's own reader: a Google Earth track through the File source,
+    labelled with its kind in the picker; a plugin's readers show as badges
+    in the Plugins menu (built-ins aren't listed there)."""
+    uid = upload(page, KML, "sat.kml")
+    page.evaluate(f"() => openFile('{uid}', {{plan: true}})")
+    page.wait_for_function("() => plan && plan.summary.reader === 'kml'")
+    assert page.evaluate("() => plan.summary.title === 'Sat' && plan.track.t.length === 12")
+    assert track_drawn(page) > 0
+    assert "sat.kml · KML track" in page.evaluate(
+        "() => [...document.querySelectorAll('option')].map(o => o.textContent).join('|')"
+    )
+    page.click("text=Plugins")
+    badges = page.evaluate(
+        "() => [...document.querySelectorAll('.mb-badge')].map(b => b.textContent)"
+    )
+    assert "reads Toy track" in badges
+    page.keyboard.press("Escape")
 
 
 def test_camera_views_and_screenshot(page, browser):

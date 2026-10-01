@@ -36,9 +36,11 @@ the source is ready.
 
 **File**
 :   A finished trajectory from a file: choose a stored file or upload one
-    (drag and drop works). An active plugin that recognises the format
-    describes it, offers its options, and turns it into a plan. The core
-    reads no formats itself — they all come from plugins.
+    (drag and drop works). The reader that recognises the format describes
+    it, offers its options, and turns it into a plan. The core reads **KML
+    and KMZ** itself — a Google Earth `gx:Track` (timed) or a `LineString`
+    path (untimed, sampled at a step you choose), one track per Placemark —
+    which is what most tools export; other formats come from plugins.
 
 Plugins can add more sources; their buttons appear in the same row while the
 plugin is on.

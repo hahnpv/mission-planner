@@ -2,7 +2,7 @@
 
 from mission_planner.plugins import CORE_MCP_TOOLS
 
-BUILTINS = ("passes", "maneuvers", "decay", "files", "sso")
+BUILTINS = ("passes", "maneuvers", "decay", "files", "sso", "kml")
 
 
 def test_builtins_are_loaded_and_always_active(core_reg):
@@ -28,6 +28,7 @@ def test_builtins_are_listed_with_what_they_add(core_client):
         mods["files"]["mcp_tools"] == ["load_file"] and mods["files"]["sources"][0]["id"] == "file"
     )
     assert mods["sso"]["js_url"] == "/plugins/sso/sso.js" and not mods["sso"]["routes"]
+    assert mods["kml"]["file_readers"] == [{"id": "kml", "label": "KML track"}]
 
 
 def test_budget_endpoint(core_client):
@@ -46,7 +47,9 @@ def test_budget_endpoint_rejects_bad_input(core_client):
 
 
 def test_module_js_served(core_reg, core_client):
-    for name in BUILTINS:
+    with_js = [n for n in BUILTINS if core_reg.records[n].get("js")]
+    assert with_js == [n for n in BUILTINS if n != "kml"]  # a reader-only module needs no UI code
+    for name in with_js:
         res = core_client.get(f"/plugins/{name}/{core_reg.records[name].get('js')}")
         assert res.status_code == 200, name
         assert b"MP.register" in res.data

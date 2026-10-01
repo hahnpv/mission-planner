@@ -17,7 +17,7 @@ so every pattern below has a working example in the core:
 | pure math + REST route + MCP tool | `modules/maneuvers.py`, `static/modules/maneuvers.js` |
 | UI-only panel reacting to plans | `modules/decay.py`, `static/modules/decay.js` |
 | propagators, sources, data packs, `requires`, `available` | the fake plugins in `tests/test_plugins.py` |
-| a file format (`file_readers`) | the toy reader in `tests/test_filekinds.py` |
+| a file format (`file_readers`) | `modules/kml.py` (the core's KML / KMZ reader); the toy reader in `tests/test_filekinds.py` |
 | a complete plugin: math, REST route, MCP tool, panel, map layers, menu toggle, tests | `examples/groundstation/` — built step by step in the [tutorial](tutorial.md) |
 
 The reference for spec keys is the docstring of `mission_planner/plugins.py`;
@@ -383,10 +383,10 @@ file reader (section 3.6) and the core's File source does the rest.
 ### 3.6 File formats — `file_readers`
 
 The core has one "File" source (built-in `modules/files.py`): the user picks
-or uploads a file, the core asks every active plugin's file readers which one
+or uploads a file, the core asks every active file reader which one
 recognises it, and that reader describes it for the panel and turns it into a
-finished trajectory. A new format is a few Python functions — no UI code, no
-routes:
+finished trajectory. The core's own reader is KML / KMZ (`modules/kml.py`);
+a new format is a few Python functions — no UI code, no routes:
 
 ```python
 def detect(path) -> bool:

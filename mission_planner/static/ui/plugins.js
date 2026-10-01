@@ -232,6 +232,7 @@ function pluginItems() {
         enabled: () => loaded, detail, detailErr: err,
         badges: [m.js_url && "panel", m.routes && "routes", m.map && "map",
                  ...(m.modes || []).map(x => "mode " + x.mode), m.catalog && "data",
+                 ...(m.file_readers || []).map(x => "reads " + x.label),
                  m.mcp_tools?.length && `mcp ×${m.mcp_tools.length}`,
                  ...(m.requires || []).map(r => "needs " + r)].filter(Boolean),
       };

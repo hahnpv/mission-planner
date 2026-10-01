@@ -192,6 +192,10 @@ def create_app() -> Flask:
                 }
                 for sid, sp in (r.get("sources") or {}).items()
             ],
+            "file_readers": [
+                {"id": fid, "label": fp.get("label", fid)}
+                for fid, fp in (r.get("file_readers") or {}).items()
+            ],
             "works_with": list(r.get("works_with", ["orbit"])),
         }
 
