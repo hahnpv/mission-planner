@@ -35,7 +35,7 @@ gt.extra["entry"]                      # predicted entry epoch + subpoint (or No
 | mode | physics | cost | stops at |
 |---|---|---|---|
 | `kepler` | two-body + J2 secular | ms | never |
-| `decay` | averaged King-Hele with a co-rotating atmosphere, US76 extended to 1000 km | ms | 100 km interface |
+| `decay` | King-Hele's theory (e ≤ 0.2) with a co-rotating atmosphere, US76 extended to 1000 km | ms | perigee at the 100 km interface |
 | *plugin* | whatever a plugin's propagator flies | — | — |
 
 Decay mode uses a static atmosphere, so lifetimes are nominal, not predictions

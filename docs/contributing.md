@@ -11,13 +11,23 @@ pip install -e ".[dev,docs]"
 ## Tests and lint
 
 ```bash
-python -m pytest -q                      # a few seconds
+python -m playwright install chromium    # once: the browser for the UI tests
+python -m pytest -q                      # ~12 s; -m "not ui" skips the browser
 ruff check . && ruff format --check .    # config: ruff.toml
 ```
 
 The tests run over the built-in modules only (the `core_reg` / `core_client`
 fixtures in `tests/conftest.py`), so plugins installed in your environment
 can't change the result. Every test gets its own upload store.
+
+`tests/test_ui.py` serves the app on a free port and drives it in headless
+Chromium: the page loads without script errors, a plan draws in every view,
+every panel opens, the camera views and the screenshot work. It catches a
+broken script or a layer that stops drawing, not pixel changes. Without the
+browser those tests skip.
+
+GitHub Actions runs the lint and the whole suite, UI tests included, on
+every push and pull request (`.github/workflows/tests.yml`).
 
 ## Where things go
 

@@ -59,3 +59,14 @@ def density(alt_m):
     log = np.where(alt > h_grid[-1], top + slope * (alt - h_grid[-1]), log)
     rho = np.exp(log)
     return rho if rho.shape else float(rho)
+
+
+def scale_height(alt_m, half_span_m: float = 2e3):
+    """Local density scale height H = -1 / (d ln rho / dh) [m] at altitude
+    [m] (scalar or array), from a central difference over +-`half_span_m`:
+    the H of the exponential atmosphere that matches the table there."""
+    alt = np.asarray(alt_m, dtype=float)
+    lo = np.log(density(alt - half_span_m))
+    hi = np.log(density(alt + half_span_m))
+    h = 2.0 * half_span_m / (lo - hi)
+    return h if h.shape else float(h)

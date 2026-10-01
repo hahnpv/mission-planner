@@ -10,6 +10,10 @@
 // a drag on the map lets go of it.  From the flat map a view switches to the
 // orbit view, except "over vehicle", which just centres the map on it.
 // The bar is pinned to the bottom of the side panel (#camerabar).
+//
+// "screenshot" copies the main pane (the map / globe / orbit SVG, plugin
+// layers included) to the clipboard as a PNG, or downloads it where the
+// clipboard can't take images (an older browser, a non-localhost http page).
 
 // Where the focused vehicle is, in the earth's axes at the playback time
 // (the orbit view's ECI frame), in earth radii: sample k turned east by the
@@ -90,6 +94,62 @@ function cameraReleased() {
   renderCamera();
 }
 
+// The main pane as a PNG blob at twice its on-screen size.  The SVG's own
+// attributes carry its colours; the page supplies only the background and
+// the font, which a detached image would lose, so they are written in.
+function mapPng() {
+  const svg = $("map"), css = getComputedStyle(svg);
+  const w = svg.clientWidth, h = svg.clientHeight, scale = 2;
+  const clone = svg.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.setAttribute("width", w);
+  clone.setAttribute("height", h);
+  clone.setAttribute("style", `font-family:${css.fontFamily}; font-size:${css.fontSize}`);
+  const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  const vb = svg.viewBox.baseVal;
+  // Cover the whole pane, letterbox included (preserveAspectRatio "meet").
+  const k = Math.max(vb.width / w, vb.height / h);
+  Object.entries({ x: vb.x + (vb.width - w * k) / 2, y: vb.y + (vb.height - h * k) / 2,
+                   width: w * k, height: h * k, fill: css.backgroundColor })
+    .forEach(([a, v]) => bg.setAttribute(a, v));
+  clone.insertBefore(bg, clone.firstChild);
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)],
+                                           { type: "image/svg+xml" }));
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = w * scale; c.height = h * scale;
+      const g = c.getContext("2d");
+      g.scale(scale, scale);
+      g.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? resolve(b) : reject(new Error("the canvas gave no image")), "image/png");
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("the map would not render")); };
+    img.src = url;
+  });
+}
+async function takeScreenshot() {
+  const png = mapPng();
+  try {
+    // Hand the clipboard a promise, inside the click: Safari needs that.
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    status("screenshot copied to the clipboard.");
+    return "clipboard";
+  } catch (err) {
+    let blob;
+    try { blob = await png; } catch (e) { status(`screenshot failed: ${e.message}`, true); return "failed"; }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `mission-planner-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    status("the clipboard can't take images here: screenshot downloaded instead.");
+    return "download";
+  }
+}
+
 function renderCamera() {
   const box = $("camerabar");
   box.querySelectorAll("button[data-cam]").forEach(b =>
@@ -101,8 +161,11 @@ function renderCamera() {
   box.innerHTML = `<div class="lbl">camera</div>
     <div class="camgrid">${CAMERA_VIEWS.map(v =>
       `<button class="small ghost" data-cam="${v.id}" title="${escHtml(v.title)}">${escHtml(v.label)}</button>`).join("")}</div>
-    <label class="camfollow" title="keep the view aimed as playback runs">
-      <input id="camfollow" type="checkbox"> follow</label>`;
+    <div class="camfollow">
+      <label title="keep the view aimed as playback runs"><input id="camfollow" type="checkbox"> follow</label>
+      <button id="camshot" class="small ghost" title="copy the main pane to the clipboard as a PNG">take screenshot</button>
+    </div>`;
+  $("camshot").onclick = takeScreenshot;
   box.querySelectorAll("button[data-cam]").forEach(b => b.onclick = () => setCameraView(b.dataset.cam));
   $("camfollow").onchange = () => {
     camera.follow = $("camfollow").checked;

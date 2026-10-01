@@ -212,6 +212,71 @@ class Orbit:
             epoch=epoch,
         )
 
+    @classmethod
+    def from_state(cls, r, v, epoch: datetime | None = None) -> Orbit:
+        """Orbit from an ECI position [m] and inertial velocity [m/s] at `epoch`
+        — the inverse of `eci_state(0)`, for a hand-off from a simulator or
+        another propagator.  The state is taken as osculating two-body
+        elements, which then propagate with two-body + J2 secular.
+
+        Circular orbits (e below E_CIRCULAR) set argp = 0 and carry the
+        argument of latitude in m0; equatorial ones set raan = 0 and measure
+        from the x axis.  Raises ValueError for a state that isn't a bound
+        orbit (hyperbolic, parabolic or degenerate).
+        """
+        r = np.asarray(r, dtype=float).reshape(3)
+        v = np.asarray(v, dtype=float).reshape(3)
+        rn, vn = float(np.linalg.norm(r)), float(np.linalg.norm(v))
+        h = np.cross(r, v)
+        hn = float(np.linalg.norm(h))
+        if rn == 0.0 or hn < 1e-9 * rn * max(vn, 1e-12):
+            raise ValueError("state is degenerate: zero radius or radial (rectilinear) motion")
+        energy = 0.5 * vn * vn - MU / rn
+        if energy >= 0.0:
+            raise ValueError(f"state is not a bound orbit (specific energy {energy:.1f} J/kg >= 0)")
+        a = -MU / (2.0 * energy)
+        e_vec = np.cross(v, h) / MU - r / rn
+        e = float(np.linalg.norm(e_vec))
+        inc = math.acos(max(-1.0, min(1.0, h[2] / hn)))
+        n_vec = np.array([-h[1], h[0], 0.0])  # toward the ascending node
+        nn = float(np.linalg.norm(n_vec))
+        equatorial = nn < 1e-11 * hn
+        if equatorial:
+            raan = 0.0
+            n_hat = np.array([1.0, 0.0, 0.0])
+        else:
+            n_hat = n_vec / nn
+            raan = math.atan2(n_hat[1], n_hat[0])
+        # Angles in the orbit plane, measured from the node line toward the
+        # direction of motion (h_hat x n_hat is 90 deg ahead of the node).
+        h_hat = h / hn
+        m_hat = np.cross(h_hat, n_hat)
+
+        def plane_angle(x):
+            return math.atan2(float(x @ m_hat), float(x @ n_hat))
+
+        u = plane_angle(r)  # argument of latitude (true longitude if equatorial)
+        if e < E_CIRCULAR:
+            return cls(
+                a=a,
+                e=0.0,
+                inc=inc,
+                raan=wrap_pi(raan),
+                argp=0.0,
+                m0=wrap_pi(u),
+                epoch=as_utc(epoch or now_utc()),
+            )
+        argp = plane_angle(e_vec)
+        return cls(
+            a=a,
+            e=e,
+            inc=inc,
+            raan=wrap_pi(raan),
+            argp=wrap_pi(argp),
+            m0=wrap_pi(M_from_nu(u - argp, e)),
+            epoch=as_utc(epoch or now_utc()),
+        )
+
     # ------------------------------------------------------------- properties
     @property
     def alt_km(self) -> float:

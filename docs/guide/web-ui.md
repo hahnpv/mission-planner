@@ -145,7 +145,9 @@ The panels under the form are modules. They draw on the map only while open.
     interface.
 
 **Drag decay**
-:   After a plan in a drag mode: an altitude-vs-time sparkline, and the entry
+:   After a plan in a drag mode: an altitude-vs-time sparkline (for an
+    elliptic orbit, the mean altitude inside a band from perigee to apogee
+    that closes as drag circularizes the orbit), and the entry
     interface crossing (and impact, for modes that fly to the ground).
 
 ### The ground-station plugin

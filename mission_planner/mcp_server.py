@@ -5,7 +5,7 @@ Exposes the orbit-planning library to an agent, plus `show_scene` /
 mission_planner.server`, http://127.0.0.1:3030) so results appear on the
 map in front of the user.
 
-Core tools: plan_orbit, list_launch_sites, show_scene, show_plan
+Core tools: plan_orbit, track_samples, list_launch_sites, show_scene, show_plan
 (plugins.CORE_MCP_TOOLS).  Built-in modules and active plugins add theirs
 (`mcp_tools` in their spec) when this process starts; the UI's live plugin
 switches don't reach it — MP_DISABLE_MODULES does.
@@ -17,6 +17,7 @@ import json
 import urllib.error
 import urllib.request
 
+import numpy as np
 from mcp.server.fastmcp import FastMCP
 
 from . import catalog
@@ -32,6 +33,8 @@ from .plugins import registry
 from .scene import Scene
 
 UI_URL = "http://127.0.0.1:3030"
+SAMPLES_DEFAULT = 500  # track_samples: points returned unless asked otherwise
+SAMPLES_MAX = 5000  # ... and at most, to keep an agent's context small
 
 mcp = FastMCP("mission-planner", dependencies=["numpy"])
 
@@ -103,11 +106,11 @@ def plan_orbit(
         perigee_km/apogee_km: elliptic orbit instead of alt_km;
             perigee_offset_deg places perigee that many degrees downrange
             of the site crossing (0 = perigee overhead, 180 = antipodal).
-            Note decay mode is circular-only (e <= 0.05).
+            Decay mode takes e <= 0.2.
         epoch_utc: ISO launch epoch (default: now).
         hours: propagation horizon (the sample step coarsens with it).
-        mode: "kepler" (two-body + J2), "decay" (averaged King-Hele drag
-            decay; needs beta), or a mode provided by an installed plugin
+        mode: "kepler" (two-body + J2), "decay" (King-Hele drag decay,
+            e <= 0.2; needs beta), or a mode provided by an installed plugin
             (an unknown mode's error lists the available ones).
         beta: ballistic coefficient m/(Cd*A) [kg/m^2] for drag modes.
     Returns orbit summary (period, revs/day, RAAN drift, launch azimuth);
@@ -142,6 +145,75 @@ def plan_orbit(
     if gt.extra.get("impact") is not None:
         out["impact"] = gt.extra["impact"]
     return out
+
+
+@mcp.tool()
+def track_samples(
+    site: str = DEFAULT_SITE,
+    alt_km: float = 400.0,
+    inc_deg: float = 51.6,
+    epoch_utc: str | None = None,
+    hours: float = 24.0,
+    mode: str = "kepler",
+    beta: float | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+    ascending: bool = True,
+    perigee_km: float | None = None,
+    apogee_km: float | None = None,
+    perigee_offset_deg: float = 0.0,
+    node_lon_deg: float | None = None,
+    argp_deg: float = 0.0,
+    max_points: int = SAMPLES_DEFAULT,
+    start_hours: float = 0.0,
+    end_hours: float | None = None,
+) -> dict:
+    """The ground track itself, as columns, for the same orbit plan_orbit
+    summarizes (same parameters) — when an agent needs the numbers: where the
+    vehicle is at a time, its altitude profile, input to its own analysis.
+
+    Args:
+        max_points: samples returned, evenly spaced over the window
+            (default 500, at most 5000); the window's end points are included.
+        start_hours/end_hours: window in hours past the epoch (default: the
+            whole horizon); a drag mode's track may end early, at entry.
+    Returns epoch_utc and columns t_s (seconds past epoch), lat_deg, lon_deg
+    (earth-fixed), alt_km, plus n and the full-resolution step dt_s.
+    """
+    if not 2 <= max_points <= SAMPLES_MAX:
+        raise ValueError(f"max_points must be 2..{SAMPLES_MAX}")
+    orb, _ = orbit_from_params(
+        site=site,
+        lat=lat,
+        lon=lon,
+        alt_km=alt_km,
+        inc_deg=inc_deg,
+        epoch_utc=epoch_utc,
+        ascending=ascending,
+        perigee_km=perigee_km,
+        apogee_km=apogee_km,
+        perigee_offset_deg=perigee_offset_deg,
+        node_lon_deg=node_lon_deg,
+        argp_deg=argp_deg,
+    )
+    dt = default_dt(hours, 60.0)
+    gt = orb.ground_track(hours * 3600.0, dt, mode=mode, beta=beta)
+    t0 = start_hours * 3600.0
+    t1 = hours * 3600.0 if end_hours is None else end_hours * 3600.0
+    if t1 < t0:
+        raise ValueError("end_hours must not be before start_hours")
+    idx = np.flatnonzero((gt.t >= t0 - 1e-6) & (gt.t <= t1 + 1e-6))
+    if len(idx) > max_points:
+        idx = idx[np.round(np.linspace(0, len(idx) - 1, max_points)).astype(int)]
+    return {
+        "epoch_utc": gt.epoch.isoformat(),
+        "n": int(len(idx)),
+        "dt_s": dt,
+        "t_s": np.round(gt.t[idx], 1).tolist(),
+        "lat_deg": np.degrees(gt.lat[idx]).round(4).tolist(),
+        "lon_deg": np.degrees(gt.lon[idx]).round(4).tolist(),
+        "alt_km": (gt.alt[idx] * 1e-3).round(3).tolist(),
+    }
 
 
 @mcp.tool()

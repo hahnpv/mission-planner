@@ -56,6 +56,20 @@ longitude is the station longitude.
 `Orbit.circular(alt_km, inc_deg, raan_deg=0, u0_deg=0, epoch=None)` builds a
 circular orbit from an inertial RAAN and an argument of latitude.
 
+### From a state vector
+
+```python
+orb = Orbit.from_state(r, v, epoch)   # ECI position (m) and velocity (m/s) at epoch
+```
+
+`from_state(r, v, epoch=None)` is the inverse of `eci_state()`: a hand-off
+from a simulator or another propagator. The state is read as osculating
+two-body elements, which then propagate with two-body + J2 like any other
+orbit (so short-period J2 terms in the state show up as a small, constant
+element error). The frame is the same ECI as `eci_state` — the one the
+Earth rotates in by GMST. A state that isn't a bound orbit raises
+`ValueError`.
+
 Epochs are timezone-aware UTC; a naive `datetime` is taken as UTC, and a
 missing epoch means now.
 
@@ -96,7 +110,7 @@ gt = orb.ground_track(14 * 86400, 60.0, mode="decay", beta=300.0)          # dra
 | mode | physics | stops at |
 |---|---|---|
 | `"kepler"` | two-body plus J2 secular drift of the node, perigee and mean motion | never |
-| `"decay"` | averaged King-Hele drag decay in a co-rotating US 1976 atmosphere; needs `beta` = m / (C<sub>d</sub>A), kg/m², and a near-circular orbit (e ≤ 0.05) | the 100 km entry interface |
+| `"decay"` | averaged King-Hele drag decay in a co-rotating US 1976 atmosphere; needs `beta` = m / (C<sub>d</sub>A), kg/m², and e ≤ 0.2 | perigee at the 100 km entry interface |
 | a plugin's mode | whatever that plugin flies | — |
 
 A decay track carries `gt.extra["decay_profile"]` (a decimated

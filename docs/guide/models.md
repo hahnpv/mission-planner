@@ -44,20 +44,50 @@ nodal one.
 
 ## Drag decay (`decay` mode)
 
-An averaged King-Hele model for **near-circular** orbits ($e \le 0.05$):
+King-Hele's theory of satellite orbits in an atmosphere (*Theory of
+Satellite Orbits in an Atmosphere*, 1964), for orbits with $e \le 0.2$.
+Drag is averaged over one revolution in an atmosphere whose density falls
+exponentially above perigee, $\rho = \rho_p\, e^{-(r - r_p)/H}$. With
+$c = ae/H$ and $I_n = I_n(c)$ the modified Bessel functions, the changes per
+revolution are
 
 $$
-\frac{da}{dt} = -F\,\frac{\rho(h)\sqrt{\mu a}}{\beta}, \qquad
+\Delta a = -2\pi\delta a^2 \rho_p e^{-c}\left[I_0 + 2eI_1 + \tfrac34 e^2(I_0 + I_2)
++ \tfrac14 e^3(3I_1 + I_3)\right]
+$$
+
+$$
+\Delta e = -2\pi\delta a \rho_p e^{-c}\left[I_1 + \tfrac{e}{2}(I_0 + I_2)
+- \tfrac{e^2}{8}(5I_1 - I_3) - \tfrac{e^3}{16}(5I_0 + 4I_2 - I_4)\right]
+$$
+
+$$
+\delta = \frac{F}{\beta}, \qquad
 \beta = \frac{m}{C_D A}\ \ [\mathrm{kg/m^2}], \qquad
-F = \left(1 - \frac{\omega_E\, a \cos i}{v}\right)^2
+F = \left(1 - \frac{\omega_E\, r_p \cos i}{v_p}\right)^2
 $$
 
-$F$ accounts for the atmosphere rotating with the Earth: a prograde vehicle
-meets less relative wind (about 0.92 at 400 km and 51.6°). The semi-major
-axis, argument of latitude and node are integrated with RK4 — the $J_2$
-rates re-evaluated as the orbit shrinks — with a step that refines only when
-decay is fast, so weeks-long horizons stay cheap. The track stops at the
-**100 km entry interface** and reports where and when it got there.
+The series is King-Hele's expansion in $e$, good to 0.1 % at $e = 0.2$; at
+$e = 0$ it is the circular law $\dot a = -F\rho\sqrt{\mu a}/\beta$. $F$
+accounts for the atmosphere rotating with the Earth: a prograde vehicle
+meets less relative wind (about 0.92 at 400 km and 51.6°). Drag acts mostly
+at perigee, so an elliptic orbit keeps its perigee roughly in place while
+its apogee comes down; it circularizes, then decays like a circular orbit.
+
+$\rho_p$ is the table density at perigee. The real scale height grows with
+altitude, which King-Hele allows for by evaluating $H$ above perigee: here
+$H$ is the table's local scale height **one scale height above perigee**, a
+choice calibrated against a direct integration of the equations of motion
+(two-body + drag in the same rotating atmosphere), which the averaged rates
+match to about 3 % for $e$ up to 0.2.
+
+The mean elements $a$, $e$, $M$, $\omega$, $\Omega$ are integrated with RK4 —
+the $J_2$ rates re-evaluated as the orbit shrinks — with a step that refines
+only when decay is fast, so weeks-long horizons stay cheap. The track is the
+position on the ellipse of those elements, so its altitude swings between
+perigee and apogee. It stops when **perigee reaches the 100 km entry
+interface** and reports where and when; the decay profile carries the mean,
+perigee and apogee altitudes.
 
 Density $\rho(h)$ is the **US Standard Atmosphere 1976**, extended to
 1000 km and extrapolated log-linearly above that. It is a **static**

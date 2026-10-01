@@ -37,7 +37,11 @@ MP.register({
       $("dc_hint").textContent = "";
       const p = tr.decay_profile;
       const W = 300, H = 64; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-      const t1 = p.t[p.t.length-1], aMin = Math.min(...p.alt_km), aMax = Math.max(...p.alt_km);
+      // An elliptic orbit (King-Hele decay) also has perigee / apogee curves:
+      // the band between them closes as drag circularizes the orbit.
+      const band = p.perigee_km && p.apogee_km && p.apogee_km.some((a, i) => a - p.perigee_km[i] > 1);
+      const lows = band ? p.perigee_km : p.alt_km, highs = band ? p.apogee_km : p.alt_km;
+      const t1 = p.t[p.t.length-1], aMin = Math.min(...lows), aMax = Math.max(...highs);
       // Don't let a small oscillation (J2 / oblate-geodetic wiggle) fill the
       // whole plot height: enforce a minimum y-span relative to altitude.
       const minSpan = Math.max(30, 0.25 * aMax);
@@ -54,8 +58,14 @@ MP.register({
         el("line", { x1:4, y1:sy(100), x2:W-44, y2:sy(100), stroke:RED,
                      "stroke-width":.7, "stroke-dasharray":"3 3", opacity:.5 }, svg);
       }
-      el("polyline", { points: p.t.map((t,i) => sx(t).toFixed(1)+","+sy(p.alt_km[i]).toFixed(1)).join(" "),
-                       fill:"none", stroke:BLUE, "stroke-width":1.5 }, svg);
+      const line = ys => p.t.map((t,i) => sx(t).toFixed(1)+","+sy(ys[i]).toFixed(1)).join(" ");
+      if (band) {
+        el("polygon", { points: line(p.apogee_km) + " " + line(p.perigee_km).split(" ").reverse().join(" "),
+                        fill:BLUE, opacity:.15, stroke:"none" }, svg);
+        for (const ys of [p.perigee_km, p.apogee_km])
+          el("polyline", { points: line(ys), fill:"none", stroke:BLUE, "stroke-width":.7, opacity:.6 }, svg);
+      }
+      el("polyline", { points: line(p.alt_km), fill:"none", stroke:BLUE, "stroke-width":1.5 }, svg);
       el("text", { x:W-38, y:sy(hi)+8, "font-size":10, fill:MUTED }, svg)
         .textContent = Math.round(hi);
       el("text", { x:W-38, y:sy(lo)+2, "font-size":10, fill:MUTED }, svg)

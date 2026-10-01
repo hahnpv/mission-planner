@@ -17,7 +17,7 @@ def tool_names():
 
 def test_core_and_module_tools_are_registered():
     names = tool_names()
-    assert {"plan_orbit", "list_launch_sites", "show_scene", "show_plan"} <= names
+    assert {"plan_orbit", "track_samples", "list_launch_sites", "show_scene", "show_plan"} <= names
     assert {"find_passes", "maneuver_budget"} <= names  # built-in modules' tools
 
 
@@ -35,6 +35,27 @@ def test_plan_orbit_site_and_element_anchored():
 def test_plan_orbit_decay_reports_entry():
     out = ms.plan_orbit(alt_km=200.0, mode="decay", beta=300.0, hours=24 * 20, epoch_utc=EPOCH)
     assert out["entry"] is not None and out["final_alt_km"] == pytest.approx(100.0, abs=2.0)
+
+
+def test_track_samples_downsamples_a_window_of_the_plan():
+    out = ms.track_samples(site="Kourou", alt_km=500.0, inc_deg=6.0, epoch_utc=EPOCH, hours=6)
+    assert out["n"] == 361 and out["t_s"][-1] == 6 * 3600  # 60 s steps: all of them fit
+    few = ms.track_samples(
+        site="Kourou",
+        alt_km=500.0,
+        inc_deg=6.0,
+        epoch_utc=EPOCH,
+        hours=6,
+        max_points=10,
+        start_hours=1,
+        end_hours=2,
+    )
+    assert few["n"] == 10 and few["t_s"][0] == 3600 and few["t_s"][-1] == 7200
+    assert set(few) == {"epoch_utc", "n", "dt_s", "t_s", "lat_deg", "lon_deg", "alt_km"}
+    assert all(len(few[k]) == 10 for k in ("lat_deg", "lon_deg", "alt_km"))
+    assert max(abs(x) for x in out["lat_deg"]) <= 6.01  # never above the inclination
+    with pytest.raises(ValueError, match="max_points"):
+        ms.track_samples(max_points=1)
 
 
 def test_list_launch_sites_tags_packs():

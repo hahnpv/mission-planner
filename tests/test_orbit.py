@@ -184,6 +184,40 @@ def test_eci_state_is_consistent_with_positions_and_two_body_invariants():
         assert vis_viva == pytest.approx(orb.a, rel=1e-12)
 
 
+@pytest.mark.parametrize(
+    "orb",
+    [
+        Orbit.from_elements(
+            500.0, 39868.0, 63.4, epoch=EPOCH, node_lon_deg=40.0, argp_deg=270.0, nu0_deg=33.0
+        ),
+        Orbit.from_elements(
+            300.0, 900.0, 97.5, epoch=EPOCH, node_lon_deg=-120.0, argp_deg=45.0, nu0_deg=200.0
+        ),
+        Orbit.circular(550.0, 53.0, raan_deg=123.0, u0_deg=-70.0, epoch=EPOCH),
+        Orbit.from_elements(35786.0, 35786.0, 0.0, epoch=EPOCH, node_lon_deg=-100.0),
+        Orbit.from_elements(1000.0, 5000.0, 0.0, epoch=EPOCH, argp_deg=30.0, nu0_deg=10.0),
+    ],
+    ids=["molniya", "sso-elliptic", "circular", "geo", "equatorial-elliptic"],
+)
+def test_from_state_inverts_eci_state(orb):
+    back = Orbit.from_state(*orb.eci_state(0.0), epoch=EPOCH)
+    assert back.a == pytest.approx(orb.a, rel=1e-9)
+    assert back.e == pytest.approx(orb.e, abs=1e-9)
+    assert back.inc == pytest.approx(orb.inc, abs=1e-9)
+    # Whatever the angle conventions pick for degenerate cases, the orbit is the same.
+    t = np.linspace(0.0, 3 * orb.period, 50)
+    assert np.abs(back.eci_positions(t) - orb.eci_positions(t)).max() < 1e-2
+    assert back.epoch == EPOCH
+
+
+def test_from_state_rejects_unbound_and_degenerate_states():
+    r = np.array([7e6, 0.0, 0.0])
+    with pytest.raises(ValueError, match="not a bound orbit"):
+        Orbit.from_state(r, [0.0, 11_000.0, 0.0], EPOCH)
+    with pytest.raises(ValueError, match="degenerate"):
+        Orbit.from_state(r, [5000.0, 0.0, 0.0], EPOCH)
+
+
 def test_argument_of_latitude_and_mean_anomaly():
     orb = Orbit.circular(400.0, 51.6, u0_deg=30.0, epoch=EPOCH)
     assert math.degrees(orb.argument_of_latitude(0.0)) == pytest.approx(30.0)

@@ -1,0 +1,29 @@
+# Lint and the test suite on every push and pull request: ruff, then pytest
+# over the core, the ground-station example, and the UI smoke tests in
+# headless Chromium.  (The public/private leak guard lives in the private
+# plugins repo and runs there.)
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q

@@ -12,9 +12,11 @@ API; the core must never import from it.
   brings flask, mcp, pytest and ruff). Check `which python` first: a non-activated shell may
   resolve `python` to the conda base env, which also has an editable install, so mistakes pass
   silently there and `ruff` is missing. `/usr/bin/python3` has no numpy.
-- Tests: `python -m pytest -q` (~4 s). `tests/conftest.py` builds the app over the built-in
-  modules only (`core_reg` / `core_client` fixtures), so installed plugins can't affect the
-  core's suite. Run the plugins repo's tests too after changing the plugin API.
+- Tests: `python -m pytest -q` (~12 s; `-m "not ui"` skips the headless-Chromium UI smoke
+  tests in `tests/test_ui.py`, which need `python -m playwright install chromium` once and skip
+  without it). CI (`.github/workflows/tests.yml`) runs ruff + the whole suite on every push.
+  `tests/conftest.py` builds the app over the built-in modules only (`core_reg` / `core_client`
+  fixtures), so installed plugins can't affect the core's suite. Run the plugins repo's tests too after changing the plugin API.
 - Web UI: `python -m mission_planner.server` → http://127.0.0.1:3030 (port hard-coded).
   MCP server: `python -m mission_planner.mcp_server`.
 
@@ -107,6 +109,9 @@ API; the core must never import from it.
 - `Orbit.period` is the anomalistic period; `nodal_period` (used for `revs_per_day`) adds the
   J2 perigee drift. Decay mode starts from the true anomaly at epoch so it lines up with the
   Kepler track, and includes the atmosphere co-rotation factor.
+- Decay mode is King-Hele's Bessel series (e <= 0.2), H taken one scale height above perigee
+  (calibrated against direct integration in `tests/test_decay.py`); it stops when perigee
+  reaches 100 km.
 - `atmosphere_1976_1000km.py` is a vendored copy kept in sync by a test in the plugins repo;
   `atmosphere.density` extrapolates log-linearly above its 1000 km table.
 
