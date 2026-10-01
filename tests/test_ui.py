@@ -365,3 +365,48 @@ def test_map_gestures_pan_zoom_pinch_tap_and_labels(page):
     # The timeline's controls say what they are to a screen reader.
     for sel in ("#play", "#scrub", "#win0", "#win1"):
         assert page.get_attribute(sel, "aria-label")
+
+
+def test_auto_replan_and_a_source_with_its_own_propagation_and_presets(page):
+    """With "auto" on, a form edit replans after a pause and keeps the scrub
+    time; off, nothing happens until the button.  A trajectory source
+    declaring propagate gets the shared epoch and span, but no mode, and
+    one with presets of its own gets them in the shape block's picker."""
+    page.evaluate("() => localStorage.removeItem('mp.autoplan')")
+    assert page.is_checked("#autoplan")
+    plan(page, inc=51.6)
+    page.evaluate("() => { tCur = 3600; }")
+    page.fill("#inc", "60")
+    page.dispatch_event("#inc", "change")
+    page.wait_for_function("() => plan.summary.inc_deg === 60")
+    assert page.evaluate("() => tCur") == 3600
+    page.uncheck("#autoplan")
+    page.fill("#inc", "70")
+    page.dispatch_event("#inc", "change")
+    page.wait_for_timeout(900)
+    assert page.evaluate("() => plan.summary.inc_deg") == 60
+    q = page.evaluate(
+        """() => {
+            window._picked = null;
+            SOURCES.push({ id: "fake", label: "Fake", kind: "trajectory", propagate: true,
+                           shape: true, ready: () => true, args() {},
+                           presets: [{ name: "Ring", perigee_km: 900, apogee_km: 900, inc_deg: 45 }],
+                           onPreset(rec) { window._picked = rec.name; } });
+            const panel = document.createElement("div");
+            panel.id = "src_fake";
+            document.getElementById("srcpanels").appendChild(panel);
+            renderSources(); setSource("fake");
+            const shown = id => !document.getElementById(id).hidden;
+            return { prop: shown("propform"), mode: shown("moderow"), args: String(args()) };
+        }"""
+    )
+    assert q["prop"] and not q["mode"]
+    assert "hours=24" in q["args"] and "epoch=" in q["args"] and "mode=" not in q["args"]
+    # Its own presets in the shape block's picker; the orbit keeps the catalog's.
+    assert page.evaluate("() => Object.keys(PRESETS).join()") == "Ring"
+    page.select_option("#preset", "Ring")
+    assert page.evaluate("() => _picked") == "Ring" and page.input_value("#peri") == "900"
+    page.evaluate("() => setSource('orbit')")
+    assert page.evaluate("() => !!PRESETS.ISS && !PRESETS.Ring && activePreset === null")
+    page.evaluate("() => setSource('fake')")
+    assert page.evaluate("() => activePreset") == "Ring"

@@ -4,7 +4,9 @@
 
 // ------------------------------------------------------------ planning
 // The request args for the current form: the source's own, then the shared
-// orbit shape (any source declaring shape) and propagation (any orbit source).
+// orbit shape (any source declaring shape), epoch and span (an orbit source,
+// or one declaring propagate) and the propagation mode (an orbit source).
+const propagates = src => src.kind === "orbit" || !!src.propagate;
 function args() {
   const src = currentSource(), a = new URLSearchParams();
   a.set("source", src.id);
@@ -13,11 +15,13 @@ function args() {
     a.set("hp", $("peri").value); a.set("inc", $("inc").value);
     if ($("apo").value) a.set("ha", $("apo").value);
   }
-  if (src.kind === "orbit") {
-    const hours = horizonHours();
-    a.set("hours", +hours.toFixed(3));
+  if (propagates(src)) {
+    a.set("hours", +horizonHours().toFixed(3));
     const ep = epochValue();
     if (ep) a.set("epoch", ep + ":00+00:00");
+  }
+  if (src.kind === "orbit") {
+    const hours = horizonHours();
     a.set("mode", $("mode").value);
     if (modeInfo($("mode").value).needs_beta) a.set("beta", $("beta").value);
     // dt: the mirror of planning.default_dt (TARGET_POINTS 20000, 30 s floor)
@@ -56,11 +60,17 @@ function buildModeSelect() {
 // number is no longer current is dropped, so a slow run can't overwrite a
 // newer plan.
 let planSeq = 0;
-async function doPlan() {
+let lastAsked = null, lastSource = null;   // the last plan request: args (a string), source id
+async function doPlan(keep = false) {
+  clearTimeout(autoTimer);
   const src = currentSource();
   if (!src.ready()) return;
+  if (propagates(src) && !epochValue()) {
+    status("epoch must read YYYY-MM-DD HH:MM (UTC)", true);
+    return;
+  }
+  lastAsked = String(args()); lastSource = src.id;
   if (src.kind === "orbit") {
-    if (!epochValue()) { status("epoch must read YYYY-MM-DD HH:MM (UTC)", true); return; }
     const m = modeInfo($("mode").value);
     if (m.slow) return doJobPlan(m.mode);
   } else if (src.slow) return doJobPlan(src.label);
@@ -71,8 +81,34 @@ async function doPlan() {
   catch (e) { if (my === planSeq) status("server unreachable: " + e.message, true); return; }
   if (my !== planSeq) return;
   if (res.error) { status(res.error, true); return; }
-  applyPlan(res);
+  applyPlan(res, keep);
 }
+// Auto-replan: with the box ticked and a plan on screen, a form change that
+// alters the request replans it after a pause, keeping the scrub time, the
+// shown window and the focused track.  Only the source on screen replans
+// (picking another waits for the plan button), and slow runs (background
+// jobs) are left to the plan button.  Changes are caught as they bubble up
+// the side panel; a module's own inputs don't alter the request, so they
+// cost nothing.
+const AUTO_KEY = "mp.autoplan", AUTO_MS = 500;
+let autoTimer = null;
+try { $("autoplan").checked = localStorage.getItem(AUTO_KEY) !== "0"; } catch { $("autoplan").checked = true; }
+$("autoplan").onchange = () => {
+  try { localStorage.setItem(AUTO_KEY, $("autoplan").checked ? "1" : "0"); } catch {}
+  scheduleReplan();
+};
+function scheduleReplan() {
+  clearTimeout(autoTimer);
+  if ($("autoplan").checked && plan) autoTimer = setTimeout(autoReplan, AUTO_MS);
+}
+function autoReplan() {
+  const src = currentSource();
+  if (!plan || src.id !== lastSource || !src.ready() || (propagates(src) && !epochValue())) return;
+  if (src.kind === "orbit" ? modeInfo($("mode").value).slow : src.slow) return;
+  if (String(args()) !== lastAsked) doPlan(true);
+}
+for (const ev of ["input", "change", "click"])
+  $("sidescroll").addEventListener(ev, e => { if (e.target.id !== "plan") scheduleReplan(); });
 // Slow plugin modes and sources run as a background job on the server; poll
 // until done.  `what` names it in the status line.
 async function doJobPlan(what) {
@@ -100,7 +136,9 @@ async function doJobPlan(what) {
   };
   poll();
 }
-function applyPlan(res) {
+// keep: hold on to the scrub time, the shown window and the focused track
+// (an auto-replan).
+function applyPlan(res, keep = false) {
   if (!res.track || !res.track.t || res.track.t.length < 2) {
     status("plan has no track points", true);
     return;
@@ -108,12 +146,16 @@ function applyPlan(res) {
   // Only the plan itself: a job result also carries its bookkeeping
   // (status, elapsed_s), which must not leak into the plan.  `args` are the
   // query args that produced it (ctx.planArgs).
+  const focus = keep && plan?.track.id;
   plan = { summary: res.summary, track: res.track, tracks: res.tracks, primary: res.primary,
            args: res.args };
+  if (focus) plan.track = plan.tracks?.find(x => x.id === focus) || plan.track;
   // A scene that came with a plan annotates that plan (its target, passes):
   // it goes when another plan replaces it.  A plain scene stays.
   if (scene?.plan && res !== scene.plan) scene = null;
-  tCur = 0; pinOpen = null;
+  const w = keep ? [...win] : [0, 1];
+  if (!keep) tCur = 0;
+  pinOpen = null;
   renderTrackPicker();
   const s = plan.summary;
   const row = r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`;
@@ -134,7 +176,7 @@ function applyPlan(res) {
   if (s.kind === "trajectory") {
     status(`showing ${s.title || s.source} (${new Date().toISOString().slice(11, 19)}Z)`);
     $("elements").innerHTML = "";
-    setWindow(0, 1);
+    setWindow(...w);
     MP.fire(MP._onPlan, "module onPlan", plan);
     return;
   }
@@ -154,10 +196,10 @@ function applyPlan(res) {
     ["i", s.inc_deg + "°"], ["&Omega; (RAAN)", s.raan_deg + "°"],
     ["&omega; (arg perigee)", s.argp_deg + "°"], ["&nu;&#8320;", s.nu0_deg + "°"],
   ].map(row).join("") + "</table>";
-  setWindow(0, 1);
+  setWindow(...w);
   MP.fire(MP._onPlan, "module onPlan", plan);
 }
-$("plan").onclick = doPlan;
+$("plan").onclick = () => doPlan();
 
 // ------------------------------------------------------------ multi-track plans
 // A plan with several tracks (plan.tracks, e.g. a constellation) keeps one in
@@ -265,7 +307,7 @@ const incClamp = v => Math.min(120, Math.max(0, v)).toFixed(1);
 // slider's floor and a hint, red while the value is below it.
 function syncInc() {
   const inc = +$("inc").value;
-  const need = anchor === "site" ? Math.abs(+$("sitelat").value || 0) : 0;
+  const need = anchor === "site" && source === "orbit" ? Math.abs(+$("sitelat").value || 0) : 0;
   $("incs").min = need ? Math.ceil(need * 2) / 2 : 0;
   $("incmin").textContent = need ? `≥ ${need}° from the site` : "";
   $("incmin").classList.toggle("warn", inc < need);
@@ -294,26 +336,36 @@ $("incs").addEventListener("keydown", ev => {
 $("pofs").oninput = () => { $("pofsv").textContent = $("pofs").value; };
 
 // ------------------------------------------------------------ orbit presets
-// Textbook orbits as a fill for the shape: picking one writes the fields, and
-// the form stays complete and plannable.  The preset stays "in play" (for the
+// Ready-made shapes as a fill: picking one writes the fields, and the form
+// stays complete and plannable.  The preset stays "in play" (for the
 // modules' onPreset hooks) until another is picked; a badge says "modified"
 // once the fields have moved away from its record.  A preset carrying
 // node_lon or argp is anchored by elements, so it switches the anchor to the
 // node longitude.
+// Each source with the shape block brings its own list (`presets`, records
+// shaped like the catalog's): the orbit's is the catalog, a constellation's
+// its patterns.  A source without one gets the shape fields alone.  Each
+// source remembers the preset it had in play.
+const presetList = src => (typeof src.presets === "function" ? src.presets() : src.presets) || null;
 function buildPresets(list) {
+  SOURCES[0].presets = list;
+  renderPresets();
+}
+function renderPresets() {
+  const list = presetList(currentSource());
+  $("presetrow").hidden = !list;
   PRESETS = {};
-  for (const p of list)
+  for (const p of list || [])
     PRESETS[p.name] = p.file_from ? { file_from: p.file_from }
       : { hp: p.perigee_km, ha: p.apogee_km ?? p.perigee_km, inc: p.inc_deg,
           argp: p.argp_deg, node_lon: p.node_lon_deg, raw: p };
-  const label = p => p.file_from ? `${p.name} · file`
+  const label = p => p.label || (p.file_from ? `${p.name} · file`
     : `${p.name} · ${p.perigee_km}${(p.apogee_km ?? p.perigee_km) > p.perigee_km
-       ? "×" + p.apogee_km : ""} km / ${p.inc_deg}°`;
-  const cur = $("preset").value;
+       ? "×" + p.apogee_km : ""} km / ${p.inc_deg}°`);
   $("preset").innerHTML = "<option value=''>custom shape</option>"
-    + list.map(p => `<option value="${escHtml(p.name)}">${escHtml(label(p))}</option>`).join("");
-  if (cur && PRESETS[cur]) $("preset").value = cur;
-  else if (cur) { $("preset").value = ""; $("preset").onchange(); }
+    + (list || []).map(p => `<option value="${escHtml(p.name)}">${escHtml(label(p))}</option>`).join("");
+  if (activePreset && !PRESETS[activePreset]) { activePreset = null; presetChanged(); }
+  $("preset").value = activePreset ?? "";
   presetBadge();
 }
 function presetBadge() {
@@ -321,7 +373,8 @@ function presetBadge() {
   $("presetbadge").hidden = !p || !!p.file_from;
   if (!p || p.file_from) return;
   const s = getShape();
-  const mod = p.hp !== s.hp || p.ha !== s.ha || Math.abs(p.inc - s.inc) > 0.051;
+  const mod = p.hp !== s.hp || p.ha !== s.ha || Math.abs(p.inc - s.inc) > 0.051
+    || !!currentSource().presetEdited?.(p.raw);
   $("presetbadge").textContent = mod ? "modified" : "preset";
   $("presetbadge").classList.toggle("mod", mod);
 }
@@ -378,6 +431,7 @@ $("preset").onchange = () => {
     $("apo").value = p.ha > p.hp ? p.ha : "";
     setInc(p.inc);
     if (p.node_lon != null) { $("nodelon").value = p.node_lon; $("nodelons").value = p.node_lon; }
+    currentSource().onPreset?.(p.raw);
     const elements = p.node_lon != null || p.argp != null;
     if (elements && anchor !== "node" && source === "orbit") setAnchor("node");
     status(`${name} — adjust if needed, then plan.`
@@ -496,6 +550,7 @@ $("sitepick").onclick = () => {
     $("sitelat").value = lat.toFixed(2); $("sitelon").value = lon.toFixed(2);
     setCustomSite();
     status(`launch site set to ${siteName()}.`);
+    scheduleReplan();
   }, "sitepick");
 };
 $("nodelon").oninput = () => { $("nodelons").value = $("nodelon").value; planHint(); };
@@ -516,7 +571,11 @@ function planHint() {
 // Where the trajectory comes from.  Each source has its own panel of options;
 // the orbit form (shape, epoch, propagation, plan) follows once the source is
 // ready.  A source: {id, label, kind: "orbit"|"trajectory", ready(), args(q)}
-// plus shape (shows the shared orbit-shape block), epochLabel, planLabel,
+// plus shape (shows the shared orbit-shape block), presets (its list for the
+// shape block's picker, or a function returning it), onPreset(record) (fill
+// the source's own fields from a picked preset), presetEdited(record) (have
+// they moved away from it), propagate (a trajectory source that takes the
+// shared epoch and span), epochLabel, planLabel,
 // slow, and mod (the plugin that added it; its chip shows only while that's
 // active).  The core's one source is the orbit, which the server knows as
 // `site` or `preset` by its anchor; plugins add theirs through a spec's
@@ -547,7 +606,9 @@ function setSource(id) {
   const alias = SOURCE_ALIAS[id];
   if (alias) id = "orbit";
   if (id !== source) {
+    currentSource().activePreset = activePreset;
     source = id;
+    activePreset = currentSource().activePreset ?? null;
     showSource();
     presetChanged();
     periSync();
@@ -560,11 +621,13 @@ function showSource() {
   for (const x of SOURCES) $("src_" + x.id).hidden = x.id !== source;
   document.querySelectorAll("#srcseg button").forEach(b => b.classList.toggle("on", b.dataset.src === source));
   $("shapeform").hidden = !src.shape;
-  $("propform").hidden = !(ready && src.kind === "orbit");
+  renderPresets();
+  $("propform").hidden = !(ready && propagates(src));
+  $("moderow").hidden = src.kind !== "orbit";
   $("planrow").hidden = !ready;
   $("plan").textContent = src.planLabel || (src.kind === "orbit" ? "plan orbit" : "show trajectory");
   if (src.epochLabel) $("epochlbl").textContent = src.epochLabel;
-  else if (src.id === "orbit") $("epochlbl").textContent = anchor === "site" ? "launch epoch (utc)" : "epoch (utc)";
+  else $("epochlbl").textContent = src.id === "orbit" && anchor === "site" ? "launch epoch (utc)" : "epoch (utc)";
   planHint();
 }
 // The source chips: the core's plus those of active plugins.  If the current

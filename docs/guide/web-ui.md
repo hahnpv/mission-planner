@@ -75,7 +75,11 @@ For orbit sources the block under the source panel sets:
   bar.
 
 **plan orbit** computes it; the line under the button says what will be
-planned, and the button stays at the bottom of the panel as it scrolls. The
+planned, and the button stays at the bottom of the panel as it scrolls.
+With **auto** ticked beside it (the default, remembered by the browser),
+once there is a plan any change to the form replans it half a second later,
+keeping the time, the shown window and the vehicle in focus; picking another
+source, and slow background runs, still wait for the button. The
 summary below the panels shows the launch site and azimuth (for a site), the
 period, revs per day and RAAN drift, and the orbital elements at the epoch.
 

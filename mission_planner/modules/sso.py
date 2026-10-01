@@ -7,7 +7,9 @@ with `sun_synchronous: true` it keeps the inclination at the exact SSO value
 for the current perigee/apogee (J2 nodal regression of +0.9856 deg/day),
 turns a local time of ascending node (LTAN) into the node longitude at the
 epoch (mean sun), and offers the repeat-ground-track family (12-16 revs per
-day) as variants.
+day) as variants.  It works on the form, not on a plan, so it stays live
+whatever kind of plan is on screen: a source with presets of its own (a
+constellation's, say) can mark one `sun_synchronous` too.
 """
 
 MODULE = {
@@ -15,4 +17,5 @@ MODULE = {
     "name": "sso",
     "title": "sun-synchronous presets",
     "js": "sso.js",
+    "works_with": ["orbit", "trajectory"],
 }

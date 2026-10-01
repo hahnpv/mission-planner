@@ -211,7 +211,7 @@ plugin is switched off.
 | `onClick(fn)` | `fn(lat, lon)` for a click on the map or globe |
 | `footprintFilter(fn)` | `fn(track, k)` → `true` / `false` / `null`: whether a vehicle (at sample `k`, the playback time) shows its horizon footprint. While any live filter answers non-null, the map draws the footprint of every track that passes them all, instead of the View menu's single footprint of the track in focus (example: the ground-station plugin, `examples/groundstation/`) |
 | `seek(t_s)` | move playback to seconds past the plan epoch |
-| `onPreset(cb)` | `cb(record, name)` whenever the orbit preset in play changes, with the preset's catalog record (so a module can claim presets by a key of its own, e.g. `sun_synchronous`); `cb(null, null)` when none is (none chosen, or a source without the shape block). A preset stays in play while the user edits the shape it filled in |
+| `onPreset(cb)` | `cb(record, name)` whenever the preset in play changes (the current source's: the catalog's for the orbit, a source's own `presets` otherwise), with the preset's record (so a module can claim presets by a key of its own, e.g. `sun_synchronous`); `cb(null, null)` when none is (none chosen, or a source without the shape block). A preset stays in play while the user edits the shape it filled in |
 | `onShapeChange(cb)` | `cb(shape)` when perigee, apogee or epoch change |
 | `getShape()` / `setShape(v)` | the form's orbit shape `{hp, ha, inc, node_lon, epoch, preset}` (`epoch` is the input's `"YYYY-MM-DDTHH:MM"` UTC string); `setShape({hp?, ha?, inc?, node_lon?})` writes through the form's setters. New `hp`/`ha` re-run `onShapeChange` hooks, `inc`/`node_lon` alone don't, so a hook can set them without looping (example: `modules/sso.py`) |
 | `presetControls(html)` | rows of your own under the orbit picker (the preset dropdown at the top of the shape block); returns the element. The core hides it while the plugin is off; show or hide what's inside (say, only for your presets) yourself |
@@ -338,7 +338,8 @@ both halves:
   say from a file or a simulator). `meta` joins the plan summary; a `title`
   there is what the status line shows.
 - the JavaScript half: `ctx.addSource({id, label, html, init(panel),
-  ready(), args(q), planLabel, shape})` in the plugin's `js`. It adds a chip
+  ready(), args(q), planLabel, shape, presets, onPreset, presetEdited,
+  propagate})` in the plugin's `js`. It adds a chip
   to the source row and a panel of the source's own inputs; `args(q)` copies
   those inputs into the request as query args (`fn` receives them), and
   `ready()` says whether the plan button should be enabled. Call
@@ -347,7 +348,22 @@ both halves:
   inclination) above your panel, and the request then carries `hp`, `ha`
   (elliptic only) and `inc` as the orbit source's does — for a source that
   is an orbit of those elements plus some of its own (a constellation,
-  say), rather than drawing them again.
+  say), rather than drawing them again. The block's preset picker lists the
+  source's own `presets` (a list, or a function returning it — call
+  `ctx.updateSource()` once it has loaded): records shaped like the
+  catalog's (`name`, `perigee_km`, `apogee_km`, `inc_deg`, an optional
+  `label`, any keys of your own, `sun_synchronous: true` for the built-in
+  SSO rules). Picking one fills the shape and calls `onPreset(record)` so
+  you can fill your own inputs; `presetEdited(record)` says whether they
+  have moved away from it, for the "modified" badge (call
+  `ctx.updateSource()` after an edit). Without `presets` the picker is
+  hidden; the catalog's orbit presets are the orbit source's. Each source
+  keeps its own preset in play (`ctx.getShape().preset`).
+  `propagate: true` shows the core's epoch and span rows on a
+  `"trajectory"` source too (an `"orbit"` source has them anyway): the request carries `epoch` and `hours`, but no
+  propagation mode, which is the core's to apply to an orbit. With the
+  form's **auto** replan on, any change to your panel's inputs that alters
+  `args(q)` replans the source on screen.
 
 ```python
 def from_state_vector(a):

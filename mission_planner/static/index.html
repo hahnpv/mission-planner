@@ -25,7 +25,7 @@
 
   <div id="shapeform">
     <div class="lbl">orbit</div>
-    <div class="fill">
+    <div class="fill" id="presetrow">
       <select id="preset" aria-label="fill the shape from a preset"></select>
       <span class="badge" id="presetbadge" hidden></span>
     </div>
@@ -117,6 +117,7 @@
       <button class="small" data-h="30 days">30 d</button>
     </div>
 
+    <div id="moderow">
     <div class="lbl">propagation mode</div>
     <select id="mode">
       <option value="kepler">kepler + J2 (no drag)</option>
@@ -126,12 +127,17 @@
       <div class="lbl">ballistic coefficient &beta; = m/(C<sub>d</sub>A)</div>
       <div class="unit"><input id="beta" type="number" step="10" value="300" aria-label="ballistic coefficient"><span>kg/m&sup2;</span></div>
     </div>
+    </div>
   </div>
 
   <!-- Sticks to the bottom of the scrolling part of the panel, so the plan
-       button is always in reach; the readback says what will be planned. -->
+       button is always in reach; the readback says what will be planned.
+       "auto" replans a moment after the form changes, once there is a plan. -->
   <div id="planrow">
-    <button id="plan" class="primary">plan orbit</button>
+    <div class="fill">
+      <button id="plan" class="primary">plan orbit</button>
+      <label class="check" title="replan as the form changes"><input id="autoplan" type="checkbox"> auto</label>
+    </div>
     <div class="hint" id="planhint"></div>
   </div>
 

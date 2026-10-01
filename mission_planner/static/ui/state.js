@@ -36,7 +36,7 @@ function saveOverlays() {
 }
 const display = { horizon: false, night: true };    // core layers, switched from the View menu
 const orbitView = { frame: "eci", ground: true };   // orbit view: frame of the lifted path, ground trace
-let activePreset = null;           // name of the orbit preset in play (a key of PRESETS, form.js)
+let activePreset = null;           // name of the preset in play (a key of PRESETS, form.js) for the current source
 let source = "orbit";              // trajectory source id (see SOURCES in form.js)
 let anchor = "site";               // how the orbit source ties the orbit to the Earth:
                                    // "site" (launch site, server source `site`) or
